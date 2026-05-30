@@ -1,0 +1,44 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; margin: 0; }
+body { margin: 0; -webkit-font-smoothing: antialiased; }
+
+/* ── Animaciones de entrada ────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-7px); }
+}
+
+.fade-up { animation: fadeUp .6s cubic-bezier(.2,.7,.2,1) both; }
+.delay-1 { animation-delay: .08s; }
+.delay-2 { animation-delay: .18s; }
+.delay-3 { animation-delay: .28s; }
+.delay-4 { animation-delay: .38s; }
+
+.float { animation: floaty 4s ease-in-out infinite; }
+
+/* ── Hover de tarjetas ─────────────────────────────────────────────────── */
+.lift { transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.lift:hover {
+  transform: translateY(-4px);
+  border-color: #2E4A72 !important;
+  box-shadow: 0 14px 34px rgba(0,0,0,.4);
+}
+
+/* ── Botones ───────────────────────────────────────────────────────────── */
+button { transition: filter .15s ease, transform .08s ease, opacity .15s ease; }
+button:not(:disabled):hover { filter: brightness(1.08); }
+button:not(:disabled):active { transform: translateY(1px); }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #1E2D45; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #2E4A72; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up, .float { animation: none; }
+}

@@ -236,30 +236,44 @@ function extractCoverages(wb, kb, XLSX) {
 // ─── IA solo para pendientes (vía proxy serverless /api/quote) ──────────────────
 // La API key vive en el servidor (Groq), nunca en el navegador.
 async function callAI(pendientes, hoja, kb) {
-  const res = await fetch("/api/quote", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      hoja,
-      pendientes: pendientes.map(p => ({ texto: p.texto })),
-      kb: kb.slice(0, 120).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
-    }),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 45000); // 45s de timeout
+  try {
+    const res = await fetch("/api/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        hoja,
+        pendientes: pendientes.map(p => ({ texto: p.texto })),
+        kb: kb.slice(0, 120).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
+      }),
+    });
 
-  if (!res.ok) {
-    let msg = `Error ${res.status}`;
-    try { const j = await res.json(); msg = j.error || msg; } catch {}
-    throw new Error(msg);
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const j = await res.json(); msg = j.error || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    return Array.isArray(data.respuestas) ? data.respuestas : [];
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 45s).");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const data = await res.json();
-  return Array.isArray(data.respuestas) ? data.respuestas : [];
 }
 
 // ─── Estilos ────────────────────────────────────────────────────────────────────
 const F = "'IBM Plex Mono','Courier New',monospace";
 const sx = {
-  app: { minHeight: "100vh", background: C.bg, color: C.text, fontFamily: F },
+  app: {
+    minHeight: "100vh", color: C.text, fontFamily: F,
+    background: `radial-gradient(900px circle at 12% -8%, rgba(26,111,216,.16), transparent 45%), radial-gradient(760px circle at 96% -2%, rgba(196,151,90,.11), transparent 46%), ${C.bg}`,
+    backgroundAttachment: "fixed",
+  },
   header: { background: `linear-gradient(135deg,${C.surface},#0A1628)`, borderBottom: `1px solid ${C.border}`, padding: "18px 28px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" },
   logo: { width: 38, height: 38, background: `linear-gradient(135deg,${C.gold},#E8B96A)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: C.bg },
   body: { padding: "24px 28px", maxWidth: 1400, margin: "0 auto" },
@@ -646,6 +660,12 @@ export default function AutoCotizador() {
                 style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
               <button style={sx.btnSm} onClick={exportKB}>⬇️ Exportar</button>
               <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>⬆️ Importar</button>
+              <button style={{ ...sx.btnSm, color: C.yellow, borderColor: "#4A3000" }}
+                onClick={() => {
+                  if (window.confirm("¿Restaurar la memoria base? Se perderán las respuestas aprendidas que no estén en la semilla.")) {
+                    persistKB(SEED_KB); notify("ok", "Memoria restaurada a la base.");
+                  }
+                }}>↺ Base</button>
               <input ref={kbFileRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={e => { importKB(e.target.files[0]); e.target.value = ""; }} />
             </div>
@@ -675,7 +695,7 @@ export default function AutoCotizador() {
         {step === "upload" && (
           <div>
             {/* Hero */}
-            <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", padding: narrow ? "8px 0 4px" : "24px 0 4px" }}>
+            <div className="fade-up" style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", padding: narrow ? "8px 0 4px" : "24px 0 4px" }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, color: C.gold, border: `1px solid ${C.border}`, background: C.surface, borderRadius: 999, padding: "5px 14px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 18 }}>
                 🦅 Seguros Cóndor · Ramos Generales
               </div>
@@ -690,7 +710,7 @@ export default function AutoCotizador() {
             </div>
 
             {/* Dropzone */}
-            <div style={{ maxWidth: 720, margin: "0 auto" }}>
+            <div className="fade-up delay-1" style={{ maxWidth: 720, margin: "0 auto" }}>
               <div
                 style={{ ...sx.drop, padding: narrow ? 32 : 48, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A" } : {}) }}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -698,7 +718,7 @@ export default function AutoCotizador() {
                 onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
                 onClick={() => fileRef.current?.click()}
               >
-                <div style={{ fontSize: 40, marginBottom: 10 }}>{parsing ? "⏳" : "📂"}</div>
+                <div className={parsing ? "" : "float"} style={{ fontSize: 40, marginBottom: 10 }}>{parsing ? "⏳" : "📂"}</div>
                 <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Arrastra el archivo del broker aquí</div>
                 <div style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>.xlsx · .xls · .xlsm · o haz clic para elegir</div>
                 <button style={{ ...sx.btnGold, opacity: !kbReady || parsing ? 0.6 : 1 }} disabled={!kbReady || parsing}>
@@ -714,7 +734,7 @@ export default function AutoCotizador() {
             </div>
 
             {/* Cómo funciona */}
-            <div style={{ maxWidth: 1000, margin: "48px auto 0" }}>
+            <div className="fade-up delay-2" style={{ maxWidth: 1000, margin: "48px auto 0" }}>
               <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.muted, marginBottom: 20 }}>Cómo funciona</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
                 {[
@@ -723,7 +743,7 @@ export default function AutoCotizador() {
                   ["3", "IA para lo nuevo", "Un clic resuelve los pendientes que no tienen precedente."],
                   ["4", "Exporta", "Descarga el mismo archivo respondido + hoja resumen."],
                 ].map(([n, t, d]) => (
-                  <div key={n} style={sx.card}>
+                  <div key={n} className="lift" style={sx.card}>
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12 }}>{n}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
                     <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
@@ -733,13 +753,13 @@ export default function AutoCotizador() {
             </div>
 
             {/* Beneficios */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, maxWidth: 1000, margin: "26px auto 0" }}>
+            <div className="fade-up delay-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, maxWidth: 1000, margin: "26px auto 0" }}>
               {[
                 ["🧠", "Aprende contigo", `Ya tiene ${kb.length} respuestas. Cada cobertura que corriges se guarda para la próxima vez.`],
                 ["⚡", "Match instantáneo", "Las coberturas conocidas se llenan solas, sin esperar a la IA ni gastar llamadas."],
                 ["📄", "Llena tu archivo", "Te devuelve el mismo Excel del broker con las respuestas puestas, listo para reenviar."],
               ].map(([ic, t, d], i) => (
-                <div key={i} style={sx.card}>
+                <div key={i} className="lift" style={sx.card}>
                   <div style={{ fontSize: 22, marginBottom: 6 }}>{ic}</div>
                   <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
                   <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
