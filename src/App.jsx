@@ -674,26 +674,66 @@ export default function AutoCotizador() {
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
         {step === "upload" && (
           <div>
-            <h2 style={{ fontSize: 21, fontWeight: 700, margin: "0 0 6px" }}>Nueva Cotización</h2>
-            <p style={{ color: C.muted, margin: "0 0 26px", fontSize: 13 }}>
-              Sube el Excel del broker. La app llena las respuestas al instante con lo que ya aprendió y usa IA solo para lo nuevo.
-            </p>
-            <div
-              style={{ ...sx.drop, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A" } : {}) }}
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
-              onClick={() => fileRef.current?.click()}
-            >
-              <div style={{ fontSize: 34, marginBottom: 10 }}>📂</div>
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Arrastra el archivo del broker aquí</div>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>.xlsx · .xls · .xlsm</div>
-              <button style={{ ...sx.btn, opacity: !kbReady || parsing ? 0.6 : 1 }} disabled={!kbReady || parsing}>
-                {parsing ? "Leyendo archivo..." : kbReady ? "Seleccionar archivo" : "Cargando memoria..."}
-              </button>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
+            {/* Hero */}
+            <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", padding: narrow ? "8px 0 4px" : "24px 0 4px" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, color: C.gold, border: `1px solid ${C.border}`, background: C.surface, borderRadius: 999, padding: "5px 14px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 18 }}>
+                🦅 Seguros Cóndor · Ramos Generales
+              </div>
+              <h1 style={{ fontSize: narrow ? 28 : 42, fontWeight: 700, lineHeight: 1.12, margin: "0 0 16px", letterSpacing: -0.5 }}>
+                Cotiza en minutos,<br />
+                <span style={{ background: `linear-gradient(90deg,${C.accentLight},${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>no en horas</span>
+              </h1>
+              <p style={{ color: C.muted, fontSize: narrow ? 13 : 15, lineHeight: 1.7, margin: "0 0 28px" }}>
+                Sube el Excel del broker y la app responde las coberturas al instante con lo que ya aprendió.
+                Usa IA solo para lo nuevo y te devuelve el mismo archivo, respondido y listo para reenviar.
+              </p>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, marginTop: 22 }}>
+
+            {/* Dropzone */}
+            <div style={{ maxWidth: 720, margin: "0 auto" }}>
+              <div
+                style={{ ...sx.drop, padding: narrow ? 32 : 48, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A" } : {}) }}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+                onClick={() => fileRef.current?.click()}
+              >
+                <div style={{ fontSize: 40, marginBottom: 10 }}>{parsing ? "⏳" : "📂"}</div>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Arrastra el archivo del broker aquí</div>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>.xlsx · .xls · .xlsm · o haz clic para elegir</div>
+                <button style={{ ...sx.btnGold, opacity: !kbReady || parsing ? 0.6 : 1 }} disabled={!kbReady || parsing}>
+                  {parsing ? "Leyendo archivo..." : kbReady ? "Seleccionar archivo" : "Cargando memoria..."}
+                </button>
+                <input ref={fileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", gap: narrow ? 12 : 22, flexWrap: "wrap", marginTop: 16, fontSize: 11, color: C.muted }}>
+                <span>🔒 API key protegida en el servidor</span>
+                <span>🧠 {kb.length} respuestas en memoria</span>
+                <span>📄 Exporta el mismo Excel</span>
+              </div>
+            </div>
+
+            {/* Cómo funciona */}
+            <div style={{ maxWidth: 1000, margin: "48px auto 0" }}>
+              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.muted, marginBottom: 20 }}>Cómo funciona</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
+                {[
+                  ["1", "Sube el archivo", "Arrastra el Excel del broker (.xlsx, .xls, .xlsm)."],
+                  ["2", "Auto-llenado", "Las coberturas conocidas se responden solas al instante."],
+                  ["3", "IA para lo nuevo", "Un clic resuelve los pendientes que no tienen precedente."],
+                  ["4", "Exporta", "Descarga el mismo archivo respondido + hoja resumen."],
+                ].map(([n, t, d]) => (
+                  <div key={n} style={sx.card}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12 }}>{n}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
+                    <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Beneficios */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, maxWidth: 1000, margin: "26px auto 0" }}>
               {[
                 ["🧠", "Aprende contigo", `Ya tiene ${kb.length} respuestas. Cada cobertura que corriges se guarda para la próxima vez.`],
                 ["⚡", "Match instantáneo", "Las coberturas conocidas se llenan solas, sin esperar a la IA ni gastar llamadas."],
@@ -705,6 +745,11 @@ export default function AutoCotizador() {
                   <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Footer */}
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginTop: 40, paddingTop: 18, borderTop: `1px solid ${C.border}`, maxWidth: 1000, marginLeft: "auto", marginRight: "auto" }}>
+              Auto-Cotizador · Seguros Cóndor S.A. — herramienta interna de suscripción
             </div>
           </div>
         )}
