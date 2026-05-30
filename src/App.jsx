@@ -1,5 +1,20 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import * as XLSX from "xlsx";
+
+// xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
+let _xlsx = null;
+async function getXLSX() {
+  if (!_xlsx) _xlsx = await import("xlsx");
+  return _xlsx;
+}
+
+// Descarga un objeto como archivo JSON (para respaldo de memoria).
+function downloadJSON(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 // ─── Storage shim (localStorage) ────────────────────────────────────────────
 const storage = {
   async get(key) {
@@ -175,7 +190,7 @@ function findResponseCol(data, coverageCol) {
 const RELEVANT = ["multirriesgo","multiriesgo","deducible","dinero","valores","equipo","maquinaria",
   "vehiculo","vehículo","veh ","responsabilidad","transporte","garantia","garantía","incendio","robo"];
 
-function extractCoverages(wb, kb) {
+function extractCoverages(wb, kb, XLSX) {
   const results = {};
   for (const sheetName of wb.SheetNames) {
     const clean = normalize(sheetName);
@@ -288,8 +303,20 @@ export default function AutoCotizador() {
   const [parsing, setParsing] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("todas"); // todas | pendientes | respondidas
+  const [showKB, setShowKB] = useState(false);   // panel de memoria
+  const [kbSearch, setKbSearch] = useState("");
+  const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
+  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
   const kbRef = useRef(SEED_KB);
   const fileRef = useRef();
+  const kbFileRef = useRef();
+
+  // Responsive: detecta pantallas angostas
+  useEffect(() => {
+    const f = () => setNarrow(window.innerWidth < 640);
+    window.addEventListener("resize", f);
+    return () => window.removeEventListener("resize", f);
+  }, []);
 
   // Toast con auto-cierre
   const notify = useCallback((type, msg, ms = 4500) => {
@@ -319,7 +346,11 @@ export default function AutoCotizador() {
 
   const persistKB = useCallback(async (newKb) => {
     kbRef.current = newKb; setKb(newKb);
-    try { await storage.set(STORAGE_KEY, JSON.stringify(newKb)); } catch {}
+    try {
+      await storage.set(STORAGE_KEY, JSON.stringify(newKb));
+      // Respaldo automático rolling (protege ante corrupción accidental).
+      localStorage.setItem(STORAGE_KEY + "_backup", JSON.stringify({ ts: Date.now(), kb: newKb }));
+    } catch {}
   }, []);
 
   // Aprender una respuesta
@@ -338,6 +369,70 @@ export default function AutoCotizador() {
     persistKB(next);
   }, [persistKB]);
 
+  // ── Respaldo de memoria ──────────────────────────────────────────────────
+  const exportKB = useCallback(() => {
+    const date = new Date().toISOString().slice(0, 10);
+    downloadJSON(`cotizador_memoria_${date}.json`, kbRef.current);
+    notify("ok", `Memoria exportada (${kbRef.current.length} respuestas).`);
+  }, [notify]);
+
+  const importKB = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const incoming = Array.isArray(data) ? data : data.kb;
+      if (!Array.isArray(incoming) || !incoming.every(k => k && k.cobertura && "respuesta" in k)) {
+        throw new Error("estructura inválida");
+      }
+      // Une con la actual (prioriza lo importado).
+      const map = new Map(kbRef.current.map(k => [normalize(k.cobertura), k]));
+      incoming.forEach(k => map.set(normalize(k.cobertura), { count: 1, ...k }));
+      const merged = [...map.values()];
+      persistKB(merged);
+      notify("ok", `Memoria importada: ${incoming.length} respuestas (total ${merged.length}).`);
+    } catch (e) {
+      notify("error", `No se pudo importar: ${e.message || "archivo JSON inválido"}.`);
+    }
+  }, [persistKB, notify]);
+
+  // ── Gestión de memoria (editar/borrar) ───────────────────────────────────
+  const updateKBEntry = useCallback((cobertura, respuesta) => {
+    const n = normalize(cobertura);
+    const next = kbRef.current.map(k => normalize(k.cobertura) === n ? { ...k, respuesta } : k);
+    persistKB(next);
+  }, [persistKB]);
+
+  const deleteKBEntry = useCallback((cobertura) => {
+    const n = normalize(cobertura);
+    persistKB(kbRef.current.filter(k => normalize(k.cobertura) !== n));
+  }, [persistKB]);
+
+  // ── IA para una sola cobertura ───────────────────────────────────────────
+  const aiSingle = async (sName, idx) => {
+    const c = sheets[sName].coverages[idx];
+    setRowLoading(`${sName}::${idx}`);
+    try {
+      const ans = await callAI([{ texto: c.texto }], sName, kbRef.current);
+      const r = ans[0];
+      if (r && r.respuesta) {
+        setSheets(prev => {
+          const u = { ...prev };
+          const t = u[sName].coverages[idx];
+          t.respuesta = r.respuesta; t.tipo = "IA"; t.confianza = r.confianza || "media";
+          return u;
+        });
+        notify("ok", "Cobertura resuelta con IA.");
+      } else {
+        notify("info", "La IA no devolvió respuesta para esta cobertura.");
+      }
+    } catch (e) {
+      notify("error", `IA: ${e.message}`);
+    } finally {
+      setRowLoading(null);
+    }
+  };
+
   const handleFile = useCallback(async (file) => {
     if (!file) return;
     if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
@@ -350,10 +445,11 @@ export default function AutoCotizador() {
     }
     setParsing(true);
     try {
+      const XLSX = await getXLSX();
       const buf = await file.arrayBuffer();
       const workbook = XLSX.read(buf, { type: "array", cellStyles: true, cellNF: true });
       if (!workbook.SheetNames?.length) throw new Error("El archivo no contiene hojas.");
-      const extracted = extractCoverages(workbook, kbRef.current);
+      const extracted = extractCoverages(workbook, kbRef.current, XLSX);
       setWb(workbook);
       setFileName(file.name);
       setSheets(extracted);
@@ -447,7 +543,7 @@ export default function AutoCotizador() {
   };
 
   // Exportar: llena el archivo original + hoja resumen
-  const exportFile = () => {
+  const exportFile = async () => {
     if (!wb) return;
     const totalResp = Object.values(sheets)
       .flatMap(s => s.coverages).filter(c => c.respuesta).length;
@@ -456,6 +552,7 @@ export default function AutoCotizador() {
       return;
     }
     try {
+    const XLSX = await getXLSX();
     // 1) escribir respuestas en las celdas originales
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
       const ws = wb.Sheets[sName];
@@ -499,17 +596,18 @@ export default function AutoCotizador() {
 
   return (
     <div style={sx.app}>
-      <div style={sx.header}>
+      <div style={{ ...sx.header, padding: narrow ? "14px 16px" : "18px 28px" }}>
         <div style={sx.logo}>C</div>
         <div>
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</div>
           <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Seguros Cóndor · Ramos Generales</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ textAlign: "right" }}>
+          <button onClick={() => setShowKB(true)} title="Gestionar memoria"
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>MEMORIA</div>
             <div style={{ fontSize: 13, color: C.green }}>🧠 {kb.length} respuestas</div>
-          </div>
+          </button>
           {fileName && step === "review" && (
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>ARCHIVO</div>
@@ -534,7 +632,46 @@ export default function AutoCotizador() {
         </div>
       )}
 
-      <div style={sx.body}>
+      {showKB && (
+        <div onClick={() => setShowKB(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 760, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>🧠 Memoria · {kb.length} respuestas</span>
+              <button onClick={() => setShowKB(false)} style={{ ...sx.btnSm, fontSize: 14 }}>✕</button>
+            </div>
+            <div style={{ padding: "12px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input value={kbSearch} onChange={e => setKbSearch(e.target.value)} placeholder="🔎 Buscar en la memoria..."
+                style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
+              <button style={sx.btnSm} onClick={exportKB}>⬇️ Exportar</button>
+              <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>⬆️ Importar</button>
+              <input ref={kbFileRef} type="file" accept=".json" style={{ display: "none" }}
+                onChange={e => { importKB(e.target.files[0]); e.target.value = ""; }} />
+            </div>
+            <div style={{ overflowY: "auto", padding: "8px 18px 18px" }}>
+              {(() => {
+                const nQ = normalize(kbSearch);
+                const list = kb.filter(k => !nQ || normalize(k.cobertura).includes(nQ) || normalize(k.respuesta).includes(nQ));
+                if (list.length === 0) return <div style={{ color: C.muted, fontSize: 12, padding: 24, textAlign: "center" }}>Sin coincidencias.</div>;
+                return list.map(k => (
+                  <div key={normalize(k.cobertura)} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: "#B0C0D8", marginBottom: 4 }}>{k.cobertura}</div>
+                      <input defaultValue={k.respuesta} onBlur={e => { if (e.target.value !== k.respuesta) updateKBEntry(k.cobertura, e.target.value); }}
+                        style={{ width: "100%", background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 9px", fontSize: 12, fontFamily: F, outline: "none" }} />
+                    </div>
+                    <button onClick={() => deleteKBEntry(k.cobertura)} title="Borrar de la memoria"
+                      style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A", marginTop: 20 }}>🗑</button>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
         {step === "upload" && (
           <div>
             <h2 style={{ fontSize: 21, fontWeight: 700, margin: "0 0 6px" }}>Nueva Cotización</h2>
@@ -674,6 +811,10 @@ export default function AutoCotizador() {
                               onBlur={() => onBlurLearn(active, idx)}
                               onFocus={e => e.target.style.borderColor = C.accentLight}
                             />
+                            <button onClick={() => aiSingle(active, idx)} disabled={rowLoading === `${active}::${idx}`}
+                              style={{ ...sx.btnSm, marginTop: 5, opacity: rowLoading === `${active}::${idx}` ? 0.6 : 1, color: C.accentLight, borderColor: C.border }}>
+                              {rowLoading === `${active}::${idx}` ? "⏳ IA..." : "⚡ Responder con IA"}
+                            </button>
                           </td>
                           <td style={{ ...sx.td, textAlign: "center" }}>
                             <span style={badge(c.tipo)}>{c.tipo}</span>
