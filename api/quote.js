@@ -9,8 +9,8 @@
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
-const SYSTEM = `Eres el sistema de suscripción de Seguros Cóndor S.A. (Ecuador), ramos generales.
-Tu trabajo es decidir la respuesta de Cóndor a cada cobertura que pide el broker,
+const SYSTEM = `Eres el sistema de suscripción de una aseguradora de ramos generales (Ecuador).
+Tu trabajo es decidir la respuesta de la aseguradora a cada cobertura que pide el broker,
 imitando el estilo y criterio de las respuestas previas.`;
 
 export default async function handler(req, res) {
@@ -39,9 +39,9 @@ export default async function handler(req, res) {
       .join("\n");
     const lista = pendientes.map((c, i) => `${i + 1}. "${c.texto}"`).join("\n");
 
-    const prompt = `Genera la respuesta de Cóndor para cada cobertura del broker en la hoja "${hoja}".
+    const prompt = `Genera la respuesta de la aseguradora para cada cobertura del broker en la hoja "${hoja}".
 
-RESPUESTAS PREVIAS DE CÓNDOR (referencia de estilo y criterio):
+RESPUESTAS PREVIAS DE LA ASEGURADORA (referencia de estilo y criterio):
 ${kbText}
 
 COBERTURAS A RESPONDER:

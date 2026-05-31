@@ -1,4 +1,4 @@
-# 🦅 Auto-Cotizador · Seguros Cóndor
+# 🦅 Auto-Cotizador · Ramos Generales
 
 App web para automatizar las cotizaciones de **Ramos Generales**. Sube la plantilla Excel del broker y la app:
 

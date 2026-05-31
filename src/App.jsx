@@ -583,18 +583,18 @@ export default function AutoCotizador() {
       });
     });
     // 2) hoja resumen
-    const summary = [["HOJA", "COBERTURA / ÍTEM", "RESPUESTA CÓNDOR", "ORIGEN"]];
+    const summary = [["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN"]];
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
       coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || "(vacío)", c.tipo]));
       summary.push(["", "", "", ""]);
     });
     const wsS = XLSX.utils.aoa_to_sheet(summary);
     wsS["!cols"] = [{ wch: 22 }, { wch: 65 }, { wch: 65 }, { wch: 12 }];
-    if (wb.Sheets["✓ Respuestas Cóndor"]) delete wb.Sheets["✓ Respuestas Cóndor"];
-    XLSX.utils.book_append_sheet(wb, wsS, "✓ Respuestas Cóndor");
+    if (wb.Sheets["✓ Respuestas"]) delete wb.Sheets["✓ Respuestas"];
+    XLSX.utils.book_append_sheet(wb, wsS, "✓ Respuestas");
 
     XLSX.writeFile(wb, `${fileName.replace(/\.[^.]+$/, "")}_RESPONDIDO.xlsx`);
-    notify("ok", "Archivo exportado con las respuestas de Cóndor.");
+    notify("ok", "Archivo exportado con las respuestas.");
     } catch (e) {
       console.error(e);
       notify("error", `No se pudo exportar: ${e.message || "error desconocido"}.`);
@@ -614,7 +614,7 @@ export default function AutoCotizador() {
         <div style={sx.logo}>C</div>
         <div>
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</div>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Seguros Cóndor · Ramos Generales</div>
+          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Ramos Generales</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button onClick={() => setShowKB(true)} title="Gestionar memoria"
@@ -700,7 +700,7 @@ export default function AutoCotizador() {
               <div className="fade-up" style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 760, margin: "0 auto", padding: narrow ? "10px 0 4px" : "32px 0 4px" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, border: `1px solid ${C.border}`, background: "rgba(19,25,41,.7)", borderRadius: 999, padding: "6px 15px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 20 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} className="live-dot" />
-                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Seguros Cóndor · Ramos Generales</span>
+                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Cotización de Ramos Generales</span>
                 </div>
                 <h1 style={{ fontSize: narrow ? 30 : 48, fontWeight: 700, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: -1 }}>
                   Cotiza en minutos,<br />
@@ -836,7 +836,7 @@ export default function AutoCotizador() {
             <div className="fade-up delay-4 grad-border" style={{ maxWidth: 1000, margin: "48px auto 0", padding: narrow ? "28px 20px" : "40px", textAlign: "center" }}>
               <h2 style={{ fontSize: narrow ? 20 : 26, fontWeight: 700, margin: "0 0 10px", letterSpacing: -0.5 }}>¿Listo para cotizar tu próximo Excel?</h2>
               <p style={{ color: C.muted, fontSize: narrow ? 13 : 14.5, lineHeight: 1.6, margin: "0 auto 22px", maxWidth: 460 }}>
-                Sube el archivo del broker y deja que la memoria de Cóndor haga el trabajo pesado.
+                Sube el archivo del broker y deja que la memoria del cotizador haga el trabajo pesado.
               </p>
               <button
                 onClick={() => fileRef.current?.click()}
@@ -852,7 +852,7 @@ export default function AutoCotizador() {
                 <span style={{ ...sx.logo, width: 24, height: 24, fontSize: 12, borderRadius: 6 }}>C</span>
                 <span style={{ color: C.text, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</span>
               </div>
-              Seguros Cóndor S.A. · Ramos Generales — herramienta interna de suscripción
+              Auto-Cotizador · Ramos Generales — herramienta interna de suscripción
             </div>
           </div>
         )}
@@ -945,7 +945,7 @@ export default function AutoCotizador() {
                     <thead><tr>
                       <th style={{ ...sx.th, width: 36 }}>#</th>
                       <th style={{ ...sx.th, width: "44%" }}>COBERTURA / ÍTEM DEL BROKER</th>
-                      <th style={sx.th}>RESPUESTA CÓNDOR</th>
+                      <th style={sx.th}>NUESTRA RESPUESTA</th>
                       <th style={{ ...sx.th, width: 90 }}>ORIGEN</th>
                     </tr></thead>
                     <tbody>
