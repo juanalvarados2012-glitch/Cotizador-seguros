@@ -62,7 +62,7 @@ Reglas:
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || DEFAULT_MODEL,
         temperature: 0.2,
-        max_tokens: 2000,
+        max_tokens: 4000,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: SYSTEM },

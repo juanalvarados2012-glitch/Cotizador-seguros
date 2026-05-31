@@ -643,9 +643,9 @@ export default function AutoCotizador() {
     let firstError = null;
     let rateLimited = false;
 
-    // Lotes pequeños (por hoja) para refrescar la pantalla más seguido y que
-    // el avance no parezca congelado mientras la IA responde.
-    const BATCH_SIZE = 12;
+    // Lotes grandes = menos llamadas a la IA (cada llamada repite el contexto de
+    // memoria, así que menos llamadas = mucho menos trabajo total y más rápido).
+    const BATCH_SIZE = 25;
     const batches = [];
     for (const sName of sheetsConPend) {
       const pend = updated[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
@@ -656,7 +656,7 @@ export default function AutoCotizador() {
 
     // Varios lotes en paralelo (concurrencia controlada) para terminar antes
     // sin disparar el límite 429 de Groq. Cada lote que termina refresca la UI.
-    const CONCURRENCY = Math.min(3, batches.length);
+    const CONCURRENCY = Math.min(4, batches.length);
     const total = batches.length;
     let done = 0;
     let nextIdx = 0;
