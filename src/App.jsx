@@ -24,6 +24,62 @@ const storage = {
   async set(key, value) { localStorage.setItem(key, value); return { key, value }; },
 };
 
+// ─── Autoguardado de sesión ─────────────────────────────────────────────────
+// Las respuestas (ligeras) van en localStorage; el archivo original (pesado)
+// en IndexedDB, para poder reconstruir el Excel y exportar tras recargar.
+const SESSION_META_KEY = "cotizador_sesion_v1";
+const IDB_NAME = "cotizador_sesion";
+const IDB_STORE = "archivo";
+const IDB_KEY = "actual";
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(value) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+async function idbGet() {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const r = tx.objectStore(IDB_STORE).get(IDB_KEY);
+    r.onsuccess = () => { db.close(); resolve(r.result || null); };
+    r.onerror = () => { db.close(); reject(r.error); };
+  });
+}
+async function idbClear() {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); resolve(); };
+    });
+  } catch { /* sin IndexedDB */ }
+}
+
+// ¿La respuesta conviene que un humano la revise? (baja confianza, REVISAR, match flojo)
+function needsReview(c) {
+  if (!c || !c.respuesta) return false;
+  const r = normalize(c.respuesta);
+  if (r.includes("revisar")) return true;
+  if (c.tipo === "IA" && c.confianza === "baja") return true;
+  if (c.tipo === "Similar" && typeof c.score === "number" && c.score < 0.7) return true;
+  return false;
+}
+
 
 // ─── BASE DE CONOCIMIENTO SEMILLA (extraída del Unicomer completado) ──────────
 const SEED_KB = [
@@ -365,6 +421,7 @@ export default function AutoCotizador() {
   const kbRef = useRef(SEED_KB);
   const fileRef = useRef();
   const kbFileRef = useRef();
+  const sessionBytesRef = useRef(null); // bytes del archivo original (para exportar tras recargar)
 
   // Responsive: detecta pantallas angostas
   useEffect(() => {
@@ -397,6 +454,47 @@ export default function AutoCotizador() {
       } catch (e) { /* primera vez o sin storage */ }
       setKbReady(true);
     })();
+  }, []);
+
+  // ── Recuperar sesión anterior (no perder el trabajo al recargar) ──────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = localStorage.getItem(SESSION_META_KEY);
+        if (!raw) return;
+        const meta = JSON.parse(raw);
+        if (!meta || !meta.sheets || Object.keys(meta.sheets).length === 0) return;
+        setSheets(meta.sheets);
+        setFileName(meta.fileName || "");
+        setActive(meta.active || Object.keys(meta.sheets)[0] || null);
+        setStep("review");
+        // Reconstruir el workbook desde los bytes guardados (para poder exportar).
+        const rec = await idbGet().catch(() => null);
+        if (rec && rec.bytes) {
+          const XLSX = await getXLSX();
+          setWb(XLSX.read(rec.bytes, { type: "array", cellStyles: true, cellNF: true }));
+          sessionBytesRef.current = rec.bytes;
+        }
+        notify("info", `Sesión recuperada: ${meta.fileName || "archivo"}. Usa "Otro archivo" para empezar de cero.`, 7000);
+      } catch { /* no había sesión previa */ }
+    })();
+  }, [notify]);
+
+  // ── Autoguardado de las respuestas (se dispara al cambiar la sesión) ──────
+  useEffect(() => {
+    if (step !== "review" || !fileName || Object.keys(sheets).length === 0) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(SESSION_META_KEY, JSON.stringify({ fileName, active, sheets, ts: Date.now() }));
+      } catch { /* cuota llena: se omite el guardado */ }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [sheets, active, step, fileName]);
+
+  const clearSession = useCallback(() => {
+    try { localStorage.removeItem(SESSION_META_KEY); } catch {}
+    sessionBytesRef.current = null;
+    idbClear();
   }, []);
 
   const persistKB = useCallback(async (newKb) => {
@@ -506,6 +604,9 @@ export default function AutoCotizador() {
       const workbook = XLSX.read(buf, { type: "array", cellStyles: true, cellNF: true });
       if (!workbook.SheetNames?.length) throw new Error("El archivo no contiene hojas.");
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
+      // Guardar el archivo original para poder exportar aunque se recargue la página.
+      sessionBytesRef.current = buf.slice(0);
+      idbSet({ fileName: file.name, bytes: buf.slice(0), ts: Date.now() }).catch(() => {});
       setWb(workbook);
       setFileName(file.name);
       setSheets(extracted);
@@ -641,13 +742,13 @@ export default function AutoCotizador() {
       });
     });
     // 2) hoja resumen
-    const summary = [["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN"]];
+    const summary = [["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN", "¿REVISAR?"]];
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
-      coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || "(vacío)", c.tipo]));
-      summary.push(["", "", "", ""]);
+      coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || "(vacío)", c.tipo, needsReview(c) ? "⚠ REVISAR" : ""]));
+      summary.push(["", "", "", "", ""]);
     });
     const wsS = XLSX.utils.aoa_to_sheet(summary);
-    wsS["!cols"] = [{ wch: 22 }, { wch: 65 }, { wch: 65 }, { wch: 12 }];
+    wsS["!cols"] = [{ wch: 22 }, { wch: 65 }, { wch: 65 }, { wch: 12 }, { wch: 12 }];
     const SUMMARY_NAME = "✓ Respuestas";
     // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
     // si solo se borra de Sheets, book_append_sheet lanza "already exists".
@@ -670,6 +771,7 @@ export default function AutoCotizador() {
   const answered = all.filter(c => c.respuesta).length;
   const auto = all.filter(c => ["Exacta", "Similar", "IA", "Aprendida"].includes(c.tipo) && c.respuesta).length;
   const pend = all.filter(c => c.tipo === "Pendiente" || !c.respuesta).length;
+  const revisar = all.filter(needsReview).length;
   const pct = total ? Math.round((answered / total) * 100) : 0;
 
   return (
@@ -951,6 +1053,7 @@ export default function AutoCotizador() {
               <div style={sx.stat}><div style={sx.statLabel}>ÍTEMS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.gold }}>{total}</div></div>
               <div style={sx.stat}><div style={sx.statLabel}>AUTO-LLENADAS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.green }}>{auto}</div></div>
               <div style={sx.stat}><div style={sx.statLabel}>PENDIENTES</div><div style={{ fontSize: 26, fontWeight: 700, color: pend > 0 ? C.yellow : C.green }}>{pend}</div></div>
+              <div style={sx.stat}><div style={sx.statLabel}>POR REVISAR</div><div style={{ fontSize: 26, fontWeight: 700, color: revisar > 0 ? C.red : C.green }}>{revisar}</div></div>
               <div style={{ ...sx.stat, flex: 2, minWidth: 180 }}>
                 <div style={sx.statLabel}>COMPLETADO {answered}/{total}</div>
                 <div style={{ height: 4, borderRadius: 2, background: C.border, overflow: "hidden", marginTop: 10 }}>
@@ -965,7 +1068,7 @@ export default function AutoCotizador() {
                 {processing ? `Procesando IA... ${progress}%` : `⚡ Completar pendientes con IA (${pend})`}
               </button>
               <button style={sx.btn} onClick={exportFile}>⬇️ Exportar archivo respondido</button>
-              <button style={sx.btnSm} onClick={() => { setStep("upload"); setSheets({}); setFileName(""); setWb(null); }}>Otro archivo</button>
+              <button style={sx.btnSm} onClick={() => { setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>Otro archivo</button>
             </div>
 
             {processing && (
@@ -998,6 +1101,7 @@ export default function AutoCotizador() {
                   const isPend = c.tipo === "Pendiente" || !c.respuesta;
                   if (filter === "pendientes" && !isPend) return false;
                   if (filter === "respondidas" && isPend) return false;
+                  if (filter === "revisar" && !needsReview(c)) return false;
                   if (!nQ) return true;
                   return normalize(c.texto).includes(nQ) || normalize(c.respuesta).includes(nQ);
                 });
@@ -1025,6 +1129,7 @@ export default function AutoCotizador() {
                   {fbtn("todas", "Todas")}
                   {fbtn("pendientes", "Pendientes")}
                   {fbtn("respondidas", "Respondidas")}
+                  {fbtn("revisar", "⚠ Revisar")}
                   <span style={{ fontSize: 11, color: C.muted }}>{rows.length} de {sheets[active].coverages.length}</span>
                 </div>
                 <div style={{ overflowX: "auto" }}>
@@ -1036,8 +1141,13 @@ export default function AutoCotizador() {
                       <th style={{ ...sx.th, width: 90 }}>ORIGEN</th>
                     </tr></thead>
                     <tbody>
-                      {rows.map(({ c, idx }) => (
-                        <tr key={idx} style={{ background: idx % 2 ? "rgba(255,255,255,.015)" : "transparent" }}>
+                      {rows.map(({ c, idx }) => {
+                        const review = needsReview(c);
+                        return (
+                        <tr key={idx} style={{
+                          background: review ? "rgba(231,76,60,.07)" : idx % 2 ? "rgba(255,255,255,.015)" : "transparent",
+                          boxShadow: review ? `inset 3px 0 0 ${C.red}` : "none",
+                        }}>
                           <td style={{ ...sx.td, color: C.muted, fontSize: 10 }}>{idx + 1}</td>
                           <td style={{ ...sx.td, color: "#B0C0D8", maxWidth: 380 }}>{c.texto}</td>
                           <td style={sx.td}>
@@ -1059,9 +1169,12 @@ export default function AutoCotizador() {
                               <div style={{ fontSize: 9, marginTop: 4, color: c.confianza === "alta" ? C.green : c.confianza === "baja" ? C.red : C.yellow }}>
                                 confianza {c.confianza}
                               </div>}
+                            {review &&
+                              <div style={{ fontSize: 9, marginTop: 4, color: C.red, fontWeight: 700 }}>⚠ revisar</div>}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {rows.length === 0 && (
                         <tr><td colSpan={4} style={{ ...sx.td, textAlign: "center", color: C.muted, padding: 28 }}>
                           Sin resultados para este filtro/búsqueda.
