@@ -648,8 +648,14 @@ export default function AutoCotizador() {
     });
     const wsS = XLSX.utils.aoa_to_sheet(summary);
     wsS["!cols"] = [{ wch: 22 }, { wch: 65 }, { wch: 65 }, { wch: 12 }];
-    if (wb.Sheets["✓ Respuestas"]) delete wb.Sheets["✓ Respuestas"];
-    XLSX.utils.book_append_sheet(wb, wsS, "✓ Respuestas");
+    const SUMMARY_NAME = "✓ Respuestas";
+    // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
+    // si solo se borra de Sheets, book_append_sheet lanza "already exists".
+    if (wb.SheetNames.includes(SUMMARY_NAME)) {
+      wb.SheetNames = wb.SheetNames.filter(n => n !== SUMMARY_NAME);
+      delete wb.Sheets[SUMMARY_NAME];
+    }
+    XLSX.utils.book_append_sheet(wb, wsS, SUMMARY_NAME);
 
     XLSX.writeFile(wb, `${fileName.replace(/\.[^.]+$/, "")}_RESPONDIDO.xlsx`);
     notify("ok", "Archivo exportado con las respuestas.");
