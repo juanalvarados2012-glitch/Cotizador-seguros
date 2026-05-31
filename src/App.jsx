@@ -313,7 +313,7 @@ async function callAI(pendientes, hoja, kb) {
   const MAX_RETRIES = 4;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45000); // 45s de timeout
+    const timer = setTimeout(() => ctrl.abort(), 30000); // 30s de timeout por lote
     try {
       const res = await fetch("/api/quote", {
         method: "POST",
@@ -349,7 +349,7 @@ async function callAI(pendientes, hoja, kb) {
       return Array.isArray(data.respuestas) ? data.respuestas : [];
     } catch (e) {
       clearTimeout(timer);
-      if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 45s).");
+      if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 30s).");
       // error de red puntual → reintenta con espera
       if (attempt < MAX_RETRIES && /network|fetch|failed/i.test(e.message || "")) {
         await sleep(Math.min(2000 * 2 ** attempt, 20000));
@@ -643,9 +643,9 @@ export default function AutoCotizador() {
     let firstError = null;
     let rateLimited = false;
 
-    // Lotes pequeños (por hoja) para no saturar a Groq y respetar sus límites.
-    const BATCH_SIZE = 25;
-    const DELAY_MS = 600;
+    // Lotes pequeños (por hoja) para refrescar la pantalla más seguido y que
+    // el avance no parezca congelado mientras la IA responde.
+    const BATCH_SIZE = 12;
     const batches = [];
     for (const sName of sheetsConPend) {
       const pend = updated[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
@@ -654,30 +654,45 @@ export default function AutoCotizador() {
       }
     }
 
-    for (let b = 0; b < batches.length; b++) {
-      const { sName, items } = batches[b];
-      try {
-        const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
-        ans.forEach(({ idx, respuesta, confianza }) => {
-          const target = items[idx - 1];
-          if (target && respuesta) {
-            target.respuesta = respuesta;
-            target.tipo = "IA";
-            target.confianza = confianza || "media";
-            resueltas++;
-          }
-        });
-        setSheets({ ...updated }); // refresca el avance en pantalla lote a lote
-      } catch (e) {
-        console.error(e);
-        fallidas += items.length;
-        if (!firstError) firstError = e.message;
-        // Si Groq sigue saturado tras los reintentos, no insistas con el resto.
-        if (/429|satur/i.test(e.message || "")) { rateLimited = true; break; }
+    // Varios lotes en paralelo (concurrencia controlada) para terminar antes
+    // sin disparar el límite 429 de Groq. Cada lote que termina refresca la UI.
+    const CONCURRENCY = Math.min(3, batches.length);
+    const total = batches.length;
+    let done = 0;
+    let nextIdx = 0;
+    let stop = false;
+
+    const worker = async () => {
+      while (!stop) {
+        const myIdx = nextIdx++;
+        if (myIdx >= batches.length) return;
+        const { sName, items } = batches[myIdx];
+        try {
+          const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
+          ans.forEach(({ idx, respuesta, confianza }) => {
+            const target = items[idx - 1];
+            if (target && respuesta) {
+              target.respuesta = respuesta;
+              target.tipo = "IA";
+              target.confianza = confianza || "media";
+              resueltas++;
+            }
+          });
+          setSheets({ ...updated }); // refresca el avance en pantalla lote a lote
+        } catch (e) {
+          console.error(e);
+          fallidas += items.length;
+          if (!firstError) firstError = e.message;
+          // Si Groq sigue saturado tras los reintentos, no insistas con el resto.
+          if (/429|satur/i.test(e.message || "")) { rateLimited = true; stop = true; }
+        } finally {
+          done++;
+          setProgress(Math.round((done / total) * 100));
+        }
       }
-      setProgress(Math.round(((b + 1) / batches.length) * 100));
-      if (b < batches.length - 1) await sleep(DELAY_MS);
-    }
+    };
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
     setProgress(100);
     setSheets({ ...updated });
@@ -774,7 +789,21 @@ export default function AutoCotizador() {
     }
     XLSX.utils.book_append_sheet(workbook, wsS, SUMMARY_NAME);
 
-    XLSX.writeFile(workbook, `${fileName.replace(/\.[^.]+$/, "")}_RESPONDIDO.xlsx`);
+    // 3) descargar — Blob + ancla en vez de XLSX.writeFile: es el método más
+    // robusto en el navegador (writeFile fallaba en silencio con archivos
+    // grandes o cuando el navegador bloqueaba la descarga interna).
+    const out = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([out], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}_RESPONDIDO.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
     notify("ok", "Archivo exportado con las respuestas.");
     } catch (e) {
       console.error(e);

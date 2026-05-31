@@ -36,6 +36,17 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 - Encabezados neutros: "NUESTRA RESPUESTA", hoja "✓ Respuestas".
 - Nota: la clave interna de `localStorage` se mantuvo para no borrar la memoria.
 
+### Arreglos de funcionamiento (rama claude/export-update-delays)
+- **Exportar no descargaba:** se cambió `XLSX.writeFile` por descarga vía
+  **Blob + ancla** (`URL.createObjectURL` + `<a download>`), método robusto en
+  el navegador. `writeFile` podía fallar en silencio con archivos grandes/con
+  estilos o si el navegador bloqueaba la descarga interna.
+- **"Se queda pensando" sin actualizar:** la IA procesaba lotes de 25 **uno tras
+  otro** (con pausa y timeout de 45s), así que pasaban minutos entre cada
+  refresco. Ahora corre **3 lotes en paralelo** (concurrencia controlada) con
+  **lotes de 12**, refrescando la pantalla cada vez que un lote responde y con
+  timeout de 30s: termina antes y el avance se ve fluido.
+
 ### Arreglos de funcionamiento
 - **Error 429 de Groq:** ahora procesa en **lotes de 25**, con **reintentos** y
   pausa entre lotes, y envía solo la memoria relevante (menos tokens).
