@@ -470,6 +470,7 @@ export default function AutoCotizador() {
   const [kbSearch, setKbSearch] = useState("");
   const [showHist, setShowHist] = useState(false); // panel de historial
   const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
+  const [showPriv, setShowPriv] = useState(false); // panel de privacidad
   const [kbBackupTs, setKbBackupTs] = useState(() => {
     try { return Number(localStorage.getItem("cotizador_kb_backup_ts")) || 0; } catch { return 0; }
   });
@@ -981,6 +982,13 @@ export default function AutoCotizador() {
   const pend = all.filter(c => c.tipo === "Pendiente" || !c.respuesta).length;
   const revisar = all.filter(needsReview).length;
   const pct = total ? Math.round((answered / total) * 100) : 0;
+  // Ahorro de tiempo estimado: ~40 s por cobertura resuelta a mano (buscar
+  // precedente, redactar y escribir). Solo cuenta lo que la app llenó sola.
+  const SECS_PER_ITEM = 40;
+  const savedMin = Math.round((auto * SECS_PER_ITEM) / 60);
+  const savedLabel = savedMin >= 60
+    ? `${Math.floor(savedMin / 60)} h ${savedMin % 60} min`
+    : `${savedMin} min`;
 
   return (
     <div style={sx.app}>
@@ -991,6 +999,11 @@ export default function AutoCotizador() {
           <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Cotizador inteligente</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setShowPriv(true)} title="Cómo se manejan los datos"
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>DATOS</div>
+            <div style={{ fontSize: 13, color: C.green }}>🔒 Privacidad</div>
+          </button>
           <button onClick={() => { refreshHist(); setShowHist(true); }} title="Archivos anteriores"
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>HISTORIAL</div>
@@ -1022,6 +1035,40 @@ export default function AutoCotizador() {
         }} onClick={() => setToast(null)}>
           <span style={{ fontSize: 15 }}>{toast.type === "error" ? "⚠️" : toast.type === "ok" ? "✅" : "ℹ️"}</span>
           <span>{toast.msg}</span>
+        </div>
+      )}
+
+      {showPriv && (
+        <div onClick={() => setShowPriv(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 640, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>🔒 Privacidad y manejo de datos</span>
+              <button onClick={() => setShowPriv(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
+            </div>
+            <div style={{ padding: "16px 18px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.7, color: C.text }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>✅ Qué se queda en tu equipo</div>
+                Tu memoria de respuestas y el historial de archivos se guardan <b>solo en este navegador/dispositivo</b>. No se suben a ningún servidor nuestro.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: C.accentLight, fontWeight: 700, marginBottom: 4 }}>🤖 Qué se envía a la IA</div>
+                Solo para las coberturas <b>pendientes</b> se envía el <b>texto de la cobertura</b> y algunos ejemplos de respuestas previas, a través de un proveedor de IA (Groq). Esto se usa únicamente para generar la respuesta sugerida.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: C.gold, fontWeight: 700, marginBottom: 4 }}>🚫 Qué NO se envía</div>
+                No se envían nombres de clientes, números de póliza, valores asegurados ni datos personales: solo la descripción de la cobertura. El archivo Excel completo nunca sale de tu equipo.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: C.text, fontWeight: 700, marginBottom: 4 }}>🔑 Claves y seguridad</div>
+                La clave de la IA vive en el servidor, nunca en el navegador. La conexión con la IA es cifrada (HTTPS).
+              </div>
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, fontSize: 11.5, color: C.muted }}>
+                <b style={{ color: C.yellow }}>Para uso empresarial:</b> si la aseguradora requiere que ningún dato salga de su red, existe la opción de usar una IA privada/local. Consúltalo antes de procesar información altamente confidencial.
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1315,6 +1362,10 @@ export default function AutoCotizador() {
               <div style={sx.stat}><div style={sx.statLabel}>AUTO-LLENADAS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.green }}>{auto}</div></div>
               <div style={sx.stat}><div style={sx.statLabel}>PENDIENTES</div><div style={{ fontSize: 26, fontWeight: 700, color: pend > 0 ? C.yellow : C.green }}>{pend}</div></div>
               <div style={sx.stat}><div style={sx.statLabel}>POR REVISAR</div><div style={{ fontSize: 26, fontWeight: 700, color: revisar > 0 ? C.red : C.green }}>{revisar}</div></div>
+              <div style={{ ...sx.stat, background: "#0F2614", border: `1px solid ${C.green}` }} title="Tiempo estimado que te ahorró la app vs. responder a mano">
+                <div style={sx.statLabel}>⏱ AHORRO ESTIMADO</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: C.green }}>{savedLabel}</div>
+              </div>
               <div style={{ ...sx.stat, flex: 2, minWidth: 180 }}>
                 <div style={sx.statLabel}>COMPLETADO {answered}/{total}</div>
                 <div style={{ height: 4, borderRadius: 2, background: C.border, overflow: "hidden", marginTop: 10 }}>
