@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -614,7 +614,7 @@ export default function AutoCotizador() {
         <div style={sx.logo}>C</div>
         <div>
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</div>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Ramos Generales</div>
+          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Cotizador inteligente</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button onClick={() => setShowKB(true)} title="Gestionar memoria"
@@ -700,7 +700,7 @@ export default function AutoCotizador() {
               <div className="fade-up" style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 760, margin: "0 auto", padding: narrow ? "10px 0 4px" : "32px 0 4px" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, border: `1px solid ${C.border}`, background: "rgba(19,25,41,.7)", borderRadius: 999, padding: "6px 15px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 20 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} className="live-dot" />
-                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Cotización de Ramos Generales</span>
+                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Cotizador inteligente de coberturas</span>
                 </div>
                 <h1 style={{ fontSize: narrow ? 30 : 48, fontWeight: 700, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: -1 }}>
                   Cotiza en minutos,<br />
@@ -714,7 +714,7 @@ export default function AutoCotizador() {
                   {[
                     ["⚡", "Segundos por cotización"],
                     ["🧠", `${kb.length} respuestas aprendidas`],
-                    ["📄", "Tu mismo formato Excel"],
+                    ["📊", "Importa y exporta en Excel"],
                   ].map(([ic, t]) => (
                     <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "#B8C6DD", border: `1px solid ${C.border}`, background: "rgba(14,24,40,.6)", borderRadius: 999, padding: "6px 13px" }}>
                       <span>{ic}</span>{t}
@@ -745,6 +745,29 @@ export default function AutoCotizador() {
                 <span>🔒 API key protegida en el servidor</span>
                 <span>🧠 {kb.length} respuestas en memoria</span>
                 <span>📄 Exporta el mismo Excel</span>
+              </div>
+            </div>
+
+            {/* Compatible con Excel */}
+            <div className="fade-up delay-1 grad-border" style={{ maxWidth: 720, margin: "20px auto 0", padding: narrow ? "18px 16px" : "22px 26px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: narrow ? 13 : 14, fontWeight: 700, marginBottom: 14 }}>
+                <span style={{ fontSize: 18 }}>📊</span> 100% compatible con Excel
+              </div>
+              <div style={{ display: "flex", alignItems: "stretch", justifyContent: "center", gap: narrow ? 8 : 12, flexWrap: narrow ? "wrap" : "nowrap" }}>
+                {[
+                  ["⬆️", "Importa", ".xlsx · .xls · .xlsm del broker"],
+                  ["🤖", "Responde", "memoria + IA para lo nuevo"],
+                  ["⬇️", "Exporta", "el mismo Excel + hoja resumen"],
+                ].map(([ic, t, d], i) => (
+                  <Fragment key={t}>
+                    <div style={{ flex: 1, minWidth: narrow ? 88 : 0, textAlign: "center", background: "rgba(14,24,40,.55)", border: `1px solid ${C.border}`, borderRadius: 10, padding: narrow ? "10px 8px" : "12px 10px" }}>
+                      <div style={{ fontSize: 20, marginBottom: 5 }}>{ic}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>{t}</div>
+                      <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.4 }}>{d}</div>
+                    </div>
+                    {i < 2 && !narrow && <div style={{ display: "flex", alignItems: "center", color: C.gold, fontSize: 18 }}>→</div>}
+                  </Fragment>
+                ))}
               </div>
             </div>
 
@@ -852,7 +875,7 @@ export default function AutoCotizador() {
                 <span style={{ ...sx.logo, width: 24, height: 24, fontSize: 12, borderRadius: 6 }}>C</span>
                 <span style={{ color: C.text, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</span>
               </div>
-              Auto-Cotizador · Ramos Generales — herramienta interna de suscripción
+              Auto-Cotizador — herramienta interna de suscripción
             </div>
           </div>
         )}

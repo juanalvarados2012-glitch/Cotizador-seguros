@@ -1,6 +1,6 @@
-# 🦅 Auto-Cotizador · Ramos Generales
+# 🦅 Auto-Cotizador
 
-App web para automatizar las cotizaciones de **Ramos Generales**. Sube la plantilla Excel del broker y la app:
+App web para automatizar las cotizaciones de seguros. Sube la plantilla Excel del broker y la app:
 
 - ⚡ Llena al instante las coberturas que ya conoce (sin gastar llamadas a IA)
 - 🧠 Aprende: cada respuesta que corriges queda guardada para la próxima vez

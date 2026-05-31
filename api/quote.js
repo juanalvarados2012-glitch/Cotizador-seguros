@@ -9,7 +9,7 @@
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
-const SYSTEM = `Eres el sistema de suscripción de una aseguradora de ramos generales (Ecuador).
+const SYSTEM = `Eres el sistema de suscripción de una aseguradora (Ecuador).
 Tu trabajo es decidir la respuesta de la aseguradora a cada cobertura que pide el broker,
 imitando el estilo y criterio de las respuestas previas.`;
 
