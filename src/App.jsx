@@ -695,24 +695,39 @@ export default function AutoCotizador() {
         {step === "upload" && (
           <div>
             {/* Hero */}
-            <div className="fade-up" style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", padding: narrow ? "8px 0 4px" : "24px 0 4px" }}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, color: C.gold, border: `1px solid ${C.border}`, background: C.surface, borderRadius: 999, padding: "5px 14px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 18 }}>
-                🦅 Seguros Cóndor · Ramos Generales
+            <div style={{ position: "relative", overflow: "hidden", paddingBottom: 8 }}>
+              <div className="hero-glow" />
+              <div className="fade-up" style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 760, margin: "0 auto", padding: narrow ? "10px 0 4px" : "32px 0 4px" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, border: `1px solid ${C.border}`, background: "rgba(19,25,41,.7)", borderRadius: 999, padding: "6px 15px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 20 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} className="live-dot" />
+                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Seguros Cóndor · Ramos Generales</span>
+                </div>
+                <h1 style={{ fontSize: narrow ? 30 : 48, fontWeight: 700, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: -1 }}>
+                  Cotiza en minutos,<br />
+                  <span style={{ background: `linear-gradient(90deg,${C.accentLight},${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>no en horas</span>
+                </h1>
+                <p style={{ color: "#9FB1CC", fontSize: narrow ? 14 : 16.5, lineHeight: 1.7, margin: "0 auto 24px", maxWidth: 580 }}>
+                  Sube el Excel del broker y la app responde las coberturas al instante con lo que ya aprendió.
+                  Usa IA solo para lo nuevo y te devuelve <strong style={{ color: C.text }}>el mismo archivo</strong>, respondido y listo para reenviar.
+                </p>
+                <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                  {[
+                    ["⚡", "Segundos por cotización"],
+                    ["🧠", `${kb.length} respuestas aprendidas`],
+                    ["📄", "Tu mismo formato Excel"],
+                  ].map(([ic, t]) => (
+                    <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "#B8C6DD", border: `1px solid ${C.border}`, background: "rgba(14,24,40,.6)", borderRadius: 999, padding: "6px 13px" }}>
+                      <span>{ic}</span>{t}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <h1 style={{ fontSize: narrow ? 28 : 42, fontWeight: 700, lineHeight: 1.12, margin: "0 0 16px", letterSpacing: -0.5 }}>
-                Cotiza en minutos,<br />
-                <span style={{ background: `linear-gradient(90deg,${C.accentLight},${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>no en horas</span>
-              </h1>
-              <p style={{ color: C.muted, fontSize: narrow ? 13 : 15, lineHeight: 1.7, margin: "0 0 28px" }}>
-                Sube el Excel del broker y la app responde las coberturas al instante con lo que ya aprendió.
-                Usa IA solo para lo nuevo y te devuelve el mismo archivo, respondido y listo para reenviar.
-              </p>
             </div>
 
             {/* Dropzone */}
-            <div className="fade-up delay-1" style={{ maxWidth: 720, margin: "0 auto" }}>
+            <div className="fade-up delay-1" style={{ maxWidth: 720, margin: "20px auto 0" }}>
               <div
-                style={{ ...sx.drop, padding: narrow ? 32 : 48, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A" } : {}) }}
+                style={{ ...sx.drop, padding: narrow ? 32 : 48, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A", boxShadow: "0 0 0 4px rgba(58,142,248,.12)" } : {}) }}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
@@ -733,9 +748,26 @@ export default function AutoCotizador() {
               </div>
             </div>
 
+            {/* Franja de métricas */}
+            <div className="fade-up delay-2 grad-border" style={{ maxWidth: 1000, margin: "44px auto 0", padding: narrow ? "20px 16px" : "26px 32px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "repeat(3,1fr)", gap: narrow ? 18 : 14, textAlign: "center" }}>
+                {[
+                  [`${kb.length}`, "respuestas en memoria", C.green],
+                  ["Minutos", "en vez de horas por cotización", C.accentLight],
+                  ["100%", "tu mismo archivo, sin reescribir nada", C.gold],
+                ].map(([big, small, col], i) => (
+                  <div key={i} style={{ borderLeft: !narrow && i > 0 ? `1px solid ${C.border}` : "none", padding: narrow ? 0 : "0 8px" }}>
+                    <div style={{ fontSize: narrow ? 30 : 36, fontWeight: 700, color: col, lineHeight: 1, marginBottom: 8, letterSpacing: -1 }}>{big}</div>
+                    <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>{small}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Cómo funciona */}
             <div className="fade-up delay-2" style={{ maxWidth: 1000, margin: "48px auto 0" }}>
-              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.muted, marginBottom: 20 }}>Cómo funciona</div>
+              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>Cómo funciona</div>
+              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>De Excel del broker a cotización lista en 4 pasos</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
                 {[
                   ["1", "Sube el archivo", "Arrastra el Excel del broker (.xlsx, .xls, .xlsm)."],
@@ -744,7 +776,7 @@ export default function AutoCotizador() {
                   ["4", "Exporta", "Descarga el mismo archivo respondido + hoja resumen."],
                 ].map(([n, t, d]) => (
                   <div key={n} className="lift" style={sx.card}>
-                    <div style={{ width: 30, height: 30, borderRadius: 8, background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12 }}>{n}</div>
+                    <div style={{ width: 32, height: 32, borderRadius: 9, background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12, boxShadow: "0 4px 14px rgba(26,111,216,.4)" }}>{n}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
                     <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
                   </div>
@@ -753,23 +785,74 @@ export default function AutoCotizador() {
             </div>
 
             {/* Beneficios */}
-            <div className="fade-up delay-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, maxWidth: 1000, margin: "26px auto 0" }}>
-              {[
-                ["🧠", "Aprende contigo", `Ya tiene ${kb.length} respuestas. Cada cobertura que corriges se guarda para la próxima vez.`],
-                ["⚡", "Match instantáneo", "Las coberturas conocidas se llenan solas, sin esperar a la IA ni gastar llamadas."],
-                ["📄", "Llena tu archivo", "Te devuelve el mismo Excel del broker con las respuestas puestas, listo para reenviar."],
-              ].map(([ic, t, d], i) => (
-                <div key={i} className="lift" style={sx.card}>
-                  <div style={{ fontSize: 22, marginBottom: 6 }}>{ic}</div>
-                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
-                  <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
-                </div>
-              ))}
+            <div className="fade-up delay-3" style={{ maxWidth: 1000, margin: "48px auto 0" }}>
+              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>Por qué te conviene</div>
+              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>Hecho para suscribir más rápido, sin perder criterio</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
+                {[
+                  ["🧠", "Aprende contigo", `Ya tiene ${kb.length} respuestas. Cada cobertura que corriges se guarda para la próxima vez.`],
+                  ["⚡", "Match instantáneo", "Las coberturas conocidas se llenan solas, sin esperar a la IA ni gastar llamadas."],
+                  ["📄", "Llena tu archivo", "Te devuelve el mismo Excel del broker con las respuestas puestas, listo para reenviar."],
+                  ["🔒", "Seguro por diseño", "La API key vive en el servidor, nunca en el navegador, y tus datos no salen del flujo."],
+                ].map(([ic, t, d], i) => (
+                  <div key={i} className="lift" style={sx.card}>
+                    <div style={{ fontSize: 24, marginBottom: 8 }}>{ic}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
+                    <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Antes / Después */}
+            <div className="fade-up delay-3" style={{ maxWidth: 1000, margin: "48px auto 0", display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 1fr", gap: 14 }}>
+              <div style={{ ...sx.card, padding: 22, background: "#160F0F", border: "1px solid #3A2020" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.red, marginBottom: 14, fontWeight: 700 }}>😵 Sin la app</div>
+                {[
+                  "Copiar y pegar coberturas a mano, una por una",
+                  "Buscar en cotizaciones viejas qué se respondió antes",
+                  "Horas por archivo y riesgo de errores de tipeo",
+                ].map((t, i) => (
+                  <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5, color: "#C9A8A8", lineHeight: 1.55, marginBottom: i < 2 ? 10 : 0 }}>
+                    <span style={{ color: C.red }}>✕</span>{t}
+                  </div>
+                ))}
+              </div>
+              <div style={{ ...sx.card, padding: 22, background: "#0C1A12", border: "1px solid #1C3A28" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.green, marginBottom: 14, fontWeight: 700 }}>⚡ Con Auto-Cotizador</div>
+                {[
+                  "Subes el Excel y las coberturas conocidas se llenan solas",
+                  "La memoria recuerda lo que respondiste y mejora con el uso",
+                  "Minutos por archivo y el mismo formato listo para reenviar",
+                ].map((t, i) => (
+                  <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5, color: "#A8E6BC", lineHeight: 1.55, marginBottom: i < 2 ? 10 : 0 }}>
+                    <span style={{ color: C.green }}>✓</span>{t}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* CTA de cierre */}
+            <div className="fade-up delay-4 grad-border" style={{ maxWidth: 1000, margin: "48px auto 0", padding: narrow ? "28px 20px" : "40px", textAlign: "center" }}>
+              <h2 style={{ fontSize: narrow ? 20 : 26, fontWeight: 700, margin: "0 0 10px", letterSpacing: -0.5 }}>¿Listo para cotizar tu próximo Excel?</h2>
+              <p style={{ color: C.muted, fontSize: narrow ? 13 : 14.5, lineHeight: 1.6, margin: "0 auto 22px", maxWidth: 460 }}>
+                Sube el archivo del broker y deja que la memoria de Cóndor haga el trabajo pesado.
+              </p>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={!kbReady || parsing}
+                style={{ ...sx.btnGold, padding: "14px 30px", fontSize: 14, opacity: !kbReady || parsing ? 0.6 : 1 }}>
+                {parsing ? "Leyendo archivo..." : kbReady ? "📂 Subir archivo ahora" : "Cargando memoria..."}
+              </button>
             </div>
 
             {/* Footer */}
-            <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginTop: 40, paddingTop: 18, borderTop: `1px solid ${C.border}`, maxWidth: 1000, marginLeft: "auto", marginRight: "auto" }}>
-              Auto-Cotizador · Seguros Cóndor S.A. — herramienta interna de suscripción
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginTop: 40, paddingTop: 20, borderTop: `1px solid ${C.border}`, maxWidth: 1000, marginLeft: "auto", marginRight: "auto", lineHeight: 1.7 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ ...sx.logo, width: 24, height: 24, fontSize: 12, borderRadius: 6 }}>C</span>
+                <span style={{ color: C.text, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</span>
+              </div>
+              Seguros Cóndor S.A. · Ramos Generales — herramienta interna de suscripción
             </div>
           </div>
         )}
