@@ -522,6 +522,22 @@ export default function AutoCotizador() {
     persistKB(next);
   }, [persistKB]);
 
+  // Aprender varias respuestas de una sola vez (una sola escritura en disco).
+  // Se usa para guardar automáticamente lo que respondió la IA, así la próxima
+  // vez ese archivo (o uno parecido) se llena solo, sin volver a usar la IA.
+  const learnMany = useCallback((pairs) => {
+    if (!pairs || pairs.length === 0) return;
+    const map = new Map(kbRef.current.map(k => [normalize(k.cobertura), k]));
+    pairs.forEach(({ texto, respuesta }) => {
+      if (!texto || !texto.trim() || !respuesta || !respuesta.trim()) return;
+      const n = normalize(texto);
+      const ex = map.get(n);
+      if (ex) map.set(n, { ...ex, respuesta, count: (ex.count || 1) + 1 });
+      else map.set(n, { cobertura: texto, respuesta, count: 1 });
+    });
+    persistKB(Array.from(map.values()));
+  }, [persistKB]);
+
   // ── Respaldo de memoria ──────────────────────────────────────────────────
   const exportKB = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
@@ -642,6 +658,7 @@ export default function AutoCotizador() {
     let resueltas = 0, fallidas = 0;
     let firstError = null;
     let rateLimited = false;
+    const learned = []; // respuestas de la IA a guardar en memoria al terminar
 
     // Lotes grandes = menos llamadas a la IA (cada llamada repite el contexto de
     // memoria, así que menos llamadas = mucho menos trabajo total y más rápido).
@@ -676,6 +693,12 @@ export default function AutoCotizador() {
               target.tipo = "IA";
               target.confianza = confianza || "media";
               resueltas++;
+              // Auto-aprender: guarda en memoria solo respuestas confiables
+              // (no "baja" ni "REVISAR") para no ensuciarla con posibles errores.
+              const conf = (confianza || "media").toLowerCase();
+              if (conf !== "baja" && !/^\s*revisar\s*$/i.test(respuesta)) {
+                learned.push({ texto: target.texto, respuesta });
+              }
             }
           });
           setSheets({ ...updated }); // refresca el avance en pantalla lote a lote
@@ -694,6 +717,10 @@ export default function AutoCotizador() {
 
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
+    // Guarda en memoria las respuestas confiables de la IA (una sola escritura).
+    // Así la próxima vez este archivo (o uno parecido) se llena solo, sin IA.
+    learnMany(learned);
+
     setProgress(100);
     setSheets({ ...updated });
     setProcessing(false);
@@ -705,7 +732,8 @@ export default function AutoCotizador() {
     } else if (fallidas > 0) {
       notify("info", `IA: ${resueltas} resueltas, ${fallidas} sin respuesta (${firstError}).`, 7000);
     } else {
-      notify("ok", `IA completó ${resueltas} cobertura(s) pendiente(s).`);
+      const apr = learned.length;
+      notify("ok", `IA completó ${resueltas} cobertura(s).${apr ? ` ${apr} quedaron aprendidas en memoria para la próxima.` : ""}`);
     }
   };
 
