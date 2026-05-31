@@ -7,7 +7,7 @@
 //   GROQ_MODEL     (opcional, por defecto llama-3.3-70b-versatile)
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_MODEL = "llama-3.1-8b-instant";
 
 const SYSTEM = `Eres el sistema de suscripción de una aseguradora (Ecuador).
 Tu trabajo es decidir la respuesta de la aseguradora a cada cobertura que pide el broker,
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     }
 
     const kbText = (Array.isArray(kb) ? kb : [])
-      .slice(0, 90)
+      .slice(0, 40)
       .map((k) => `"${k.cobertura}" → "${k.respuesta}"`)
       .join("\n");
     const lista = pendientes.map((c, i) => `${i + 1}. "${c.texto}"`).join("\n");

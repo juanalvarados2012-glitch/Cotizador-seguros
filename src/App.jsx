@@ -294,7 +294,7 @@ function extractCoverages(wb, kb, XLSX) {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Selecciona los ejemplos de memoria más parecidos al lote (menos tokens por llamada).
-function relevantKB(items, kb, max = 25) {
+function relevantKB(items, kb, max = 12) {
   const itemTokens = new Set(items.flatMap(it => tokens(it.texto)));
   if (itemTokens.size === 0 || kb.length <= max) return kb.slice(0, max);
   return kb
@@ -322,7 +322,7 @@ async function callAI(pendientes, hoja, kb) {
         body: JSON.stringify({
           hoja,
           pendientes: pendientes.map(p => ({ texto: p.texto })),
-          kb: kb.slice(0, 60).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
+          kb: kb.slice(0, 15).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
         }),
       });
 
@@ -645,7 +645,7 @@ export default function AutoCotizador() {
 
     // Lotes grandes = menos llamadas a la IA (cada llamada repite el contexto de
     // memoria, así que menos llamadas = mucho menos trabajo total y más rápido).
-    const BATCH_SIZE = 25;
+    const BATCH_SIZE = 30;
     const batches = [];
     for (const sName of sheetsConPend) {
       const pend = updated[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
