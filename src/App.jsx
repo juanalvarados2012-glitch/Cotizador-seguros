@@ -470,6 +470,9 @@ export default function AutoCotizador() {
   const [kbSearch, setKbSearch] = useState("");
   const [showHist, setShowHist] = useState(false); // panel de historial
   const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
+  const [kbBackupTs, setKbBackupTs] = useState(() => {
+    try { return Number(localStorage.getItem("cotizador_kb_backup_ts")) || 0; } catch { return 0; }
+  });
   const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
   const kbRef = useRef(SEED_KB);
@@ -483,6 +486,14 @@ export default function AutoCotizador() {
     window.addEventListener("resize", f);
     return () => window.removeEventListener("resize", f);
   }, []);
+
+  // Aviso al salir mientras la IA procesa, para no perder una corrida larga.
+  useEffect(() => {
+    if (!processing) return;
+    const h = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [processing]);
 
   // Toast con auto-cierre
   const notify = useCallback((type, msg, ms = 4500) => {
@@ -659,6 +670,9 @@ export default function AutoCotizador() {
   const exportKB = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
     downloadJSON(`cotizador_memoria_${date}.json`, kbRef.current);
+    const now = Date.now();
+    try { localStorage.setItem("cotizador_kb_backup_ts", String(now)); } catch {}
+    setKbBackupTs(now);
     notify("ok", `Memoria exportada (${kbRef.current.length} respuestas).`);
   }, [notify]);
 
@@ -709,6 +723,9 @@ export default function AutoCotizador() {
           t.respuesta = r.respuesta; t.tipo = "IA"; t.confianza = r.confianza || "media";
           return u;
         });
+        // Auto-aprende si es confiable (igual que el llenado por lotes).
+        const conf = (r.confianza || "media").toLowerCase();
+        if (conf !== "baja" && !/^\s*revisar\s*$/i.test(r.respuesta)) learn(c.texto, r.respuesta);
         notify("ok", "Cobertura resuelta con IA.");
       } else {
         notify("info", "La IA no devolvió respuesta para esta cobertura.");
@@ -1067,6 +1084,9 @@ export default function AutoCotizador() {
                 style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
               <button style={sx.btnSm} onClick={exportKB}>⬇️ Exportar</button>
               <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>⬆️ Importar</button>
+              <span style={{ fontSize: 10.5, color: kbBackupTs ? C.muted : C.yellow }}>
+                {kbBackupTs ? `Último respaldo: ${new Date(kbBackupTs).toLocaleDateString()}` : "⚠ Sin respaldo aún"}
+              </span>
               <button style={{ ...sx.btnSm, color: C.yellow, borderColor: "#4A3000" }}
                 onClick={() => {
                   if (window.confirm("¿Restaurar la memoria base? Se perderán las respuestas aprendidas que no estén en la semilla.")) {
