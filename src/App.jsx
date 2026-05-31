@@ -235,35 +235,76 @@ function extractCoverages(wb, kb, XLSX) {
 
 // ─── IA solo para pendientes (vía proxy serverless /api/quote) ──────────────────
 // La API key vive en el servidor (Groq), nunca en el navegador.
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Selecciona los ejemplos de memoria más parecidos al lote (menos tokens por llamada).
+function relevantKB(items, kb, max = 25) {
+  const itemTokens = new Set(items.flatMap(it => tokens(it.texto)));
+  if (itemTokens.size === 0 || kb.length <= max) return kb.slice(0, max);
+  return kb
+    .map(k => {
+      const kt = tokens(k.cobertura);
+      let overlap = 0;
+      for (const t of kt) if (itemTokens.has(t)) overlap++;
+      return { k, overlap };
+    })
+    .sort((a, b) => b.overlap - a.overlap)
+    .slice(0, max)
+    .map(s => s.k);
+}
+
 async function callAI(pendientes, hoja, kb) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000); // 45s de timeout
-  try {
-    const res = await fetch("/api/quote", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        hoja,
-        pendientes: pendientes.map(p => ({ texto: p.texto })),
-        kb: kb.slice(0, 120).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
-      }),
-    });
+  const MAX_RETRIES = 4;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45000); // 45s de timeout
+    try {
+      const res = await fetch("/api/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          hoja,
+          pendientes: pendientes.map(p => ({ texto: p.texto })),
+          kb: kb.slice(0, 60).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
+        }),
+      });
 
-    if (!res.ok) {
-      let msg = `Error ${res.status}`;
-      try { const j = await res.json(); msg = j.error || msg; } catch {}
-      throw new Error(msg);
+      // 429 = límite de velocidad de Groq → espera y reintenta
+      if (res.status === 429) {
+        let retryAfter = 0;
+        try { const j = await res.json(); retryAfter = Number(j.retryAfter) || 0; } catch {}
+        clearTimeout(timer);
+        if (attempt < MAX_RETRIES) {
+          const waitMs = retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * 2 ** attempt, 20000);
+          await sleep(waitMs);
+          continue;
+        }
+        throw new Error("Groq está saturado (429). Espera un momento y vuelve a intentar.");
+      }
+
+      if (!res.ok) {
+        let msg = `Error ${res.status}`;
+        try { const j = await res.json(); msg = j.error || msg; } catch {}
+        throw new Error(msg);
+      }
+
+      const data = await res.json();
+      return Array.isArray(data.respuestas) ? data.respuestas : [];
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 45s).");
+      // error de red puntual → reintenta con espera
+      if (attempt < MAX_RETRIES && /network|fetch|failed/i.test(e.message || "")) {
+        await sleep(Math.min(2000 * 2 ** attempt, 20000));
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = await res.json();
-    return Array.isArray(data.respuestas) ? data.respuestas : [];
-  } catch (e) {
-    if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 45s).");
-    throw e;
-  } finally {
-    clearTimeout(timer);
   }
+  throw new Error("No se pudo contactar la IA tras varios intentos.");
 }
 
 // ─── Estilos ────────────────────────────────────────────────────────────────────
@@ -427,7 +468,8 @@ export default function AutoCotizador() {
     const c = sheets[sName].coverages[idx];
     setRowLoading(`${sName}::${idx}`);
     try {
-      const ans = await callAI([{ texto: c.texto }], sName, kbRef.current);
+      const items = [{ texto: c.texto }];
+      const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
       const r = ans[0];
       if (r && r.respuesta) {
         setSheets(prev => {
@@ -498,15 +540,25 @@ export default function AutoCotizador() {
     const updated = { ...sheets };
     let resueltas = 0, fallidas = 0;
     let firstError = null;
+    let rateLimited = false;
 
-    for (let i = 0; i < sheetsConPend.length; i++) {
-      const sName = sheetsConPend[i];
+    // Lotes pequeños (por hoja) para no saturar a Groq y respetar sus límites.
+    const BATCH_SIZE = 25;
+    const DELAY_MS = 600;
+    const batches = [];
+    for (const sName of sheetsConPend) {
       const pend = updated[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
-      if (pend.length === 0) continue;
+      for (let i = 0; i < pend.length; i += BATCH_SIZE) {
+        batches.push({ sName, items: pend.slice(i, i + BATCH_SIZE) });
+      }
+    }
+
+    for (let b = 0; b < batches.length; b++) {
+      const { sName, items } = batches[b];
       try {
-        const ans = await callAI(pend, sName, kbRef.current);
+        const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
         ans.forEach(({ idx, respuesta, confianza }) => {
-          const target = pend[idx - 1];
+          const target = items[idx - 1];
           if (target && respuesta) {
             target.respuesta = respuesta;
             target.tipo = "IA";
@@ -514,19 +566,25 @@ export default function AutoCotizador() {
             resueltas++;
           }
         });
+        setSheets({ ...updated }); // refresca el avance en pantalla lote a lote
       } catch (e) {
         console.error(e);
-        fallidas += pend.length;
+        fallidas += items.length;
         if (!firstError) firstError = e.message;
+        // Si Groq sigue saturado tras los reintentos, no insistas con el resto.
+        if (/429|satur/i.test(e.message || "")) { rateLimited = true; break; }
       }
-      setProgress(Math.round(((i + 1) / sheetsConPend.length) * 100));
+      setProgress(Math.round(((b + 1) / batches.length) * 100));
+      if (b < batches.length - 1) await sleep(DELAY_MS);
     }
 
     setProgress(100);
     setSheets({ ...updated });
     setProcessing(false);
 
-    if (fallidas > 0 && resueltas === 0) {
+    if (rateLimited) {
+      notify("error", `Groq limitó por uso (429). Se resolvieron ${resueltas}; espera 1-2 min y dale de nuevo para continuar con el resto.`, 9000);
+    } else if (fallidas > 0 && resueltas === 0) {
       notify("error", `La IA no pudo responder: ${firstError || "error de conexión"}.`, 8000);
     } else if (fallidas > 0) {
       notify("info", `IA: ${resueltas} resueltas, ${fallidas} sin respuesta (${firstError}).`, 7000);

@@ -73,6 +73,15 @@ Reglas:
 
     if (!groqRes.ok) {
       const detail = await groqRes.text().catch(() => "");
+      // Reenvía el límite de velocidad para que el cliente reintente con espera.
+      if (groqRes.status === 429) {
+        const retryAfter = Number(groqRes.headers.get("retry-after")) || 0;
+        return res.status(429).json({
+          error: "Groq está limitando por exceso de uso (429).",
+          retryAfter,
+          detail: detail.slice(0, 300),
+        });
+      }
       return res.status(502).json({
         error: `Groq respondió ${groqRes.status}.`,
         detail: detail.slice(0, 500),
