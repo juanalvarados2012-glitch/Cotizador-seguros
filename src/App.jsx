@@ -717,7 +717,23 @@ export default function AutoCotizador() {
 
   // Exportar: llena el archivo original + hoja resumen
   const exportFile = async () => {
-    if (!wb) return;
+    let workbook = wb;
+    if (!workbook) {
+      // Reconstruir desde la sesión guardada (p. ej. tras recargar la página).
+      try {
+        const rec = await idbGet();
+        const bytes = (rec && rec.bytes) || sessionBytesRef.current;
+        if (bytes) {
+          const XLSXr = await getXLSX();
+          workbook = XLSXr.read(bytes, { type: "array", cellStyles: true, cellNF: true });
+          setWb(workbook);
+        }
+      } catch { /* no se pudo recuperar */ }
+    }
+    if (!workbook) {
+      notify("error", "No hay archivo cargado. Vuelve a subir el Excel del broker.");
+      return;
+    }
     const totalResp = Object.values(sheets)
       .flatMap(s => s.coverages).filter(c => c.respuesta).length;
     if (totalResp === 0) {
@@ -728,7 +744,7 @@ export default function AutoCotizador() {
     const XLSX = await getXLSX();
     // 1) escribir respuestas en las celdas originales
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
-      const ws = wb.Sheets[sName];
+      const ws = workbook.Sheets[sName];
       if (!ws) return;
       coverages.forEach(c => {
         if (!c.respuesta) return;
