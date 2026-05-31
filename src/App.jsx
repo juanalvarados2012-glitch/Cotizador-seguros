@@ -31,11 +31,20 @@ const SESSION_META_KEY = "cotizador_sesion_v1";
 const IDB_NAME = "cotizador_sesion";
 const IDB_STORE = "archivo";
 const IDB_KEY = "actual";
+// Historial de archivos completados: metadatos ligeros (para la lista) y datos
+// pesados (respuestas + bytes del Excel, solo se cargan al abrir un archivo).
+const HIST_META = "historial";       // { id, fileName, ts, total, answered, pending }
+const HIST_DATA = "historial_data";  // { id, sheets, bytes }
 
 function idbOpen() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    const req = indexedDB.open(IDB_NAME, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      if (!db.objectStoreNames.contains(HIST_META)) db.createObjectStore(HIST_META, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(HIST_DATA)) db.createObjectStore(HIST_DATA, { keyPath: "id" });
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -68,6 +77,49 @@ async function idbClear() {
       tx.onerror = () => { db.close(); resolve(); };
     });
   } catch { /* sin IndexedDB */ }
+}
+
+// ─── Historial de archivos ──────────────────────────────────────────────────
+async function histSave(entry) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([HIST_META, HIST_DATA], "readwrite");
+    tx.objectStore(HIST_META).put({
+      id: entry.id, fileName: entry.fileName, ts: entry.ts,
+      total: entry.total, answered: entry.answered, pending: entry.pending,
+    });
+    tx.objectStore(HIST_DATA).put({ id: entry.id, sheets: entry.sheets, bytes: entry.bytes || null });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+async function histList() {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HIST_META, "readonly");
+    const r = tx.objectStore(HIST_META).getAll();
+    r.onsuccess = () => { db.close(); resolve(r.result || []); };
+    r.onerror = () => { db.close(); reject(r.error); };
+  });
+}
+async function histGet(id) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HIST_DATA, "readonly");
+    const r = tx.objectStore(HIST_DATA).get(id);
+    r.onsuccess = () => { db.close(); resolve(r.result || null); };
+    r.onerror = () => { db.close(); reject(r.error); };
+  });
+}
+async function histDelete(id) {
+  const db = await idbOpen();
+  return new Promise((resolve) => {
+    const tx = db.transaction([HIST_META, HIST_DATA], "readwrite");
+    tx.objectStore(HIST_META).delete(id);
+    tx.objectStore(HIST_DATA).delete(id);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); resolve(); };
+  });
 }
 
 // ¿La respuesta conviene que un humano la revise? (baja confianza, REVISAR, match flojo)
@@ -416,6 +468,8 @@ export default function AutoCotizador() {
   const [filter, setFilter] = useState("todas"); // todas | pendientes | respondidas
   const [showKB, setShowKB] = useState(false);   // panel de memoria
   const [kbSearch, setKbSearch] = useState("");
+  const [showHist, setShowHist] = useState(false); // panel de historial
+  const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
   const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
   const kbRef = useRef(SEED_KB);
@@ -496,6 +550,69 @@ export default function AutoCotizador() {
     sessionBytesRef.current = null;
     idbClear();
   }, []);
+
+  // ── Historial de archivos completados ────────────────────────────────────
+  const refreshHist = useCallback(async () => {
+    try {
+      const items = await histList();
+      items.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      setHistItems(items);
+    } catch { /* sin historial */ }
+  }, []);
+
+  // Guarda (o actualiza) el archivo actual en el historial. id = nombre, para
+  // que reprocesar el mismo archivo actualice su entrada en vez de duplicarla.
+  const saveToHistory = useCallback(async (snapSheets, snapName) => {
+    try {
+      const sh = snapSheets || sheets;
+      const name = snapName || fileName;
+      if (!name || Object.keys(sh).length === 0) return;
+      const cov = Object.values(sh).flatMap(s => s.coverages);
+      const totalC = cov.length;
+      const ans = cov.filter(c => c.respuesta).length;
+      let bytes = sessionBytesRef.current;
+      if (!bytes) { const rec = await idbGet().catch(() => null); bytes = rec && rec.bytes; }
+      await histSave({
+        id: name, fileName: name, ts: Date.now(),
+        total: totalC, answered: ans, pending: totalC - ans,
+        sheets: sh, bytes: bytes || null,
+      });
+      refreshHist();
+    } catch { /* no se pudo guardar en historial */ }
+  }, [sheets, fileName, refreshHist]);
+
+  const openFromHistory = useCallback(async (id) => {
+    try {
+      const data = await histGet(id);
+      if (!data || !data.sheets) { notify("error", "No se pudo abrir ese archivo del historial."); return; }
+      setSheets(data.sheets);
+      setFileName(id);
+      setActive(Object.keys(data.sheets)[0] || null);
+      setSearch(""); setFilter("todas");
+      setStep("review");
+      setShowHist(false);
+      if (data.bytes) {
+        sessionBytesRef.current = data.bytes;
+        const XLSX = await getXLSX();
+        setWb(XLSX.read(data.bytes, { type: "array", cellStyles: true, cellNF: true }));
+        idbSet({ fileName: id, bytes: data.bytes, ts: Date.now() }).catch(() => {});
+      } else {
+        setWb(null);
+      }
+      notify("ok", `Archivo abierto del historial: ${id}`);
+    } catch (e) {
+      notify("error", `No se pudo abrir: ${e.message || "error"}.`);
+    }
+  }, [notify]);
+
+  const deleteFromHistory = useCallback(async (id) => {
+    await histDelete(id).catch(() => {});
+    refreshHist();
+    notify("info", "Archivo quitado del historial.");
+  }, [refreshHist, notify]);
+
+  // Cargar la lista de historial al inicio (para el contador del botón).
+  useEffect(() => { refreshHist(); }, [refreshHist]);
 
   const persistKB = useCallback(async (newKb) => {
     kbRef.current = newKb; setKb(newKb);
@@ -833,6 +950,7 @@ export default function AutoCotizador() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
     notify("ok", "Archivo exportado con las respuestas.");
+    saveToHistory(); // queda en el historial como archivo completado
     } catch (e) {
       console.error(e);
       notify("error", `No se pudo exportar: ${e.message || "error desconocido"}.`);
@@ -856,6 +974,11 @@ export default function AutoCotizador() {
           <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Cotizador inteligente</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => { refreshHist(); setShowHist(true); }} title="Archivos anteriores"
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>HISTORIAL</div>
+            <div style={{ fontSize: 13, color: C.accentLight }}>📁 {histItems.length} archivo(s)</div>
+          </button>
           <button onClick={() => setShowKB(true)} title="Gestionar memoria"
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>MEMORIA</div>
@@ -882,6 +1005,51 @@ export default function AutoCotizador() {
         }} onClick={() => setToast(null)}>
           <span style={{ fontSize: 15 }}>{toast.type === "error" ? "⚠️" : toast.type === "ok" ? "✅" : "ℹ️"}</span>
           <span>{toast.msg}</span>
+        </div>
+      )}
+
+      {showHist && (
+        <div onClick={() => setShowHist(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 720, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.accentLight }}>📁 Historial · {histItems.length} archivo(s)</span>
+              <button onClick={() => setShowHist(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
+            </div>
+            <div style={{ padding: "10px 14px", overflowY: "auto" }}>
+              {histItems.length === 0 && (
+                <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 28, lineHeight: 1.6 }}>
+                  Aún no hay archivos guardados.<br />
+                  Cuando exportes un archivo o cambies a otro, quedará aquí para reabrirlo.
+                </div>
+              )}
+              {histItems.map(h => {
+                const pctH = h.total ? Math.round((h.answered / h.total) * 100) : 0;
+                const fecha = h.ts ? new Date(h.ts).toLocaleString() : "";
+                return (
+                  <div key={h.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, color: C.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📄 {h.fileName}</div>
+                        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
+                          {fecha} · {h.answered}/{h.total} respondidas ({pctH}%)
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => openFromHistory(h.id)} style={{ ...sx.btn, padding: "7px 12px" }}>Abrir</button>
+                        <button onClick={() => { if (confirm(`¿Quitar "${h.fileName}" del historial?`)) deleteFromHistory(h.id); }}
+                          style={{ ...sx.btnSm, color: C.red, borderColor: C.border }}>🗑</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>
+              Los archivos se guardan en este navegador/dispositivo. Para respaldarlos, usa "⬇️ Exportar" en cada uno.
+            </div>
+          </div>
         </div>
       )}
 
@@ -1141,7 +1309,7 @@ export default function AutoCotizador() {
                 {processing ? `Procesando IA... ${progress}%` : `⚡ Completar pendientes con IA (${pend})`}
               </button>
               <button style={sx.btn} onClick={exportFile}>⬇️ Exportar archivo respondido</button>
-              <button style={sx.btnSm} onClick={() => { setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>Otro archivo</button>
+              <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>Otro archivo</button>
             </div>
 
             {processing && (

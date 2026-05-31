@@ -37,6 +37,15 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 - Nota: la clave interna de `localStorage` se mantuvo para no borrar la memoria.
 
 ### Arreglos de funcionamiento (rama claude/export-update-delays)
+- **Historial de archivos:** los archivos completados se guardan en IndexedDB
+  (metadatos ligeros + respuestas y bytes del Excel). Botón **📁 Historial** en
+  la cabecera: lista por fecha, con **Abrir** (reabre para ver/editar/exportar)
+  y **eliminar**. Se guarda al **exportar** y al pulsar **"Otro archivo"**.
+- **Auto-aprendizaje de la IA:** al terminar el llenado, las respuestas con
+  confianza alta/media (no "baja"/"REVISAR") se guardan en memoria, para que el
+  mismo archivo (o uno parecido) se llene solo la próxima vez, sin IA.
+- **Velocidad de la IA:** modelo `llama-3.1-8b-instant`, lotes de 30, 4 en
+  paralelo y menos ejemplos de memoria por llamada (menos tokens, menos 429).
 - **Exportar no descargaba:** se cambió `XLSX.writeFile` por descarga vía
   **Blob + ancla** (`URL.createObjectURL` + `<a download>`), método robusto en
   el navegador. `writeFile` podía fallar en silencio con archivos grandes/con
