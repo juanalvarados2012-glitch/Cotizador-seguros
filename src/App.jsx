@@ -488,7 +488,6 @@ export default function AutoCotizador() {
   const kbRef = useRef(SEED_KB);
   const fileRef = useRef();
   const kbFileRef = useRef();
-  const backupFileRef = useRef();
   const sessionBytesRef = useRef(null); // bytes del archivo original (para exportar tras recargar)
 
   // Responsive: detecta pantallas angostas
@@ -784,50 +783,6 @@ export default function AutoCotizador() {
     } catch (e) {
       console.error(e);
       notify("error", `No se pudo leer el archivo: ${e.message || "archivo dañado o ilegible."}`);
-    } finally {
-      setParsing(false);
-    }
-  }, [notify]);
-
-  // Modo demo: genera un Excel de ejemplo en memoria y lo carga por el mismo
-  // flujo, para presentar la app sin usar un archivo real de un cliente.
-  const loadDemo = useCallback(async () => {
-    setParsing(true);
-    try {
-      const XLSX = await getXLSX();
-      const mk = (rows) => XLSX.utils.aoa_to_sheet([["COBERTURA / ÍTEM", "RESPUESTA ASEGURADORA"], ...rows.map(r => [r, ""])]);
-      const wbk = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wbk, mk([
-        "Incendio y/o rayo y/o humo y/o explosión",
-        "Terremoto temblor erupción volcánica maremoto",
-        "Lluvia e inundación por desbordamiento",
-        "Robo y/o asalto con violencia a las instalaciones",
-        "Responsabilidad civil frente a terceros",
-        "Rotura accidental de vidrios y cristales",
-        "Daños por agua a mercadería almacenada",
-        "Gastos de remoción de escombros tras siniestro",
-      ]), "Multirriesgo");
-      XLSX.utils.book_append_sheet(wbk, mk([
-        "Deducible para rotura de vidrios",
-        "Deducible robo y asalto",
-        "Deducible terremoto y eventos de la naturaleza",
-        "Deducible responsabilidad civil",
-      ]), "Deducibles");
-      const arr = XLSX.write(wbk, { bookType: "xlsx", type: "array" });
-      const workbook = XLSX.read(arr, { type: "array", cellStyles: true, cellNF: true });
-      const extracted = extractCoverages(workbook, kbRef.current, XLSX);
-      sessionBytesRef.current = arr.buffer.slice(0);
-      idbSet({ fileName: "DEMO - Ejemplo.xlsx", bytes: arr.buffer.slice(0), ts: Date.now() }).catch(() => {});
-      setWb(workbook);
-      setFileName("DEMO - Ejemplo.xlsx");
-      setSheets(extracted);
-      setSearch(""); setFilter("todas");
-      setActive(Object.keys(extracted)[0] || null);
-      setStep("review");
-      notify("ok", "Modo demo: archivo de ejemplo cargado. Puedes probar todo sin un archivo real.");
-    } catch (e) {
-      console.error(e);
-      notify("error", `No se pudo cargar el demo: ${e.message || "error"}.`);
     } finally {
       setParsing(false);
     }
@@ -1194,14 +1149,8 @@ export default function AutoCotizador() {
                 );
               })}
             </div>
-            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button style={sx.btnSm} onClick={backupAll}>💾 Respaldar todo</button>
-              <button style={sx.btnSm} onClick={() => backupFileRef.current?.click()}>♻️ Restaurar</button>
-              <input ref={backupFileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
-                onChange={e => restoreAll(e.target.files[0])} />
-              <span style={{ fontSize: 10.5, color: C.muted, flex: 1, minWidth: 160 }}>
-                Guarda memoria + historial en un archivo. Útil para cambiar de equipo o no perder el trabajo.
-              </span>
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>
+              Los archivos se guardan en este navegador/dispositivo. Para respaldarlos, usa "⬇️ Exportar" en cada uno.
             </div>
           </div>
         </div>
