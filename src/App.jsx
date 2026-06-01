@@ -260,21 +260,30 @@ function jaccard(a, b) {
   return inter / (A.size + B.size - inter);
 }
 // Devuelve {respuesta, score, tipo} o null
+// Combina Jaccard con un score de "contención": el texto del broker suele ser
+// más largo que la clave en memoria, y Jaccard lo penaliza injustamente. La
+// contención mide qué fracción de la clave aparece en el texto, lo que autollena
+// muchas más coberturas. Las coincidencias flojas (0.5–0.7) quedan marcadas
+// como "por revisar" para que un humano las confirme.
 function matchKB(texto, kb) {
   const nTexto = normalize(texto);
+  const tSet = new Set(tokens(texto));
   let best = null;
   for (const k of kb) {
     const nK = normalize(k.cobertura);
     if (nK === nTexto) return { respuesta: k.respuesta, score: 1, tipo: "Exacta" };
-    const score = jaccard(texto, k.cobertura);
-    // subset: si la clave (corta) está contenida en tokens del texto
-    const kTok = tokens(k.cobertura);
-    const tTok = new Set(tokens(texto));
-    const subset = kTok.length > 0 && kTok.length <= 5 && kTok.every(t => tTok.has(t));
-    const eff = subset ? Math.max(score, 0.75) : score;
+    const kSet = new Set(tokens(k.cobertura));
+    if (kSet.size === 0 || tSet.size === 0) continue;
+    let inter = 0;
+    kSet.forEach(x => { if (tSet.has(x)) inter++; });
+    const jac = inter / (kSet.size + tSet.size - inter);   // similitud simétrica
+    const cont = inter / kSet.size;                          // cuánto de la clave está en el texto
+    const subset = kSet.size <= 6 && inter === kSet.size;    // clave corta totalmente contenida
+    let eff = Math.max(jac, cont * 0.9);
+    if (subset) eff = Math.max(eff, 0.8);
     if (!best || eff > best.score) best = { respuesta: k.respuesta, score: eff, tipo: eff >= 0.85 ? "Exacta" : "Similar" };
   }
-  if (best && best.score >= 0.55) return best;
+  if (best && best.score >= 0.5) return best;
   return null;
 }
 
