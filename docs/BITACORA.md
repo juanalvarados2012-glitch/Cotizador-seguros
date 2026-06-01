@@ -37,6 +37,12 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 - Nota: la clave interna de `localStorage` se mantuvo para no borrar la memoria.
 
 ### Arreglos de funcionamiento (rama claude/export-update-delays)
+- **Listo para empresa (mejoras gratis):** panel de **🔒 Privacidad** (qué se
+  guarda local, qué se envía a la IA, qué NO), tarjeta **⏱ Ahorro estimado** en
+  pantalla y en el Excel, **resumen ejecutivo** en la hoja exportada, **motor de
+  coincidencias afinado** (Jaccard + contención → autollena más, menos IA),
+  **modo demo** con datos de ejemplo y **respaldo/restauración en un clic**
+  (memoria + historial en un JSON).
 - **Historial de archivos:** los archivos completados se guardan en IndexedDB
   (metadatos ligeros + respuestas y bytes del Excel). Botón **📁 Historial** en
   la cabecera: lista por fecha, con **Abrir** (reabre para ver/editar/exportar)
