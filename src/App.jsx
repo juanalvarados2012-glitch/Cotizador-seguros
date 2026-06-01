@@ -935,14 +935,44 @@ export default function AutoCotizador() {
         ws["!ref"] = XLSX.utils.encode_range(ref);
       });
     });
-    // 2) hoja resumen
-    const summary = [["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN", "¿REVISAR?"]];
+    // 2) hoja resumen con encabezado y resumen ejecutivo (imagen de producto)
+    const allCov = Object.values(sheets).flatMap(s => s.coverages);
+    const stTotal = allCov.length;
+    const stAuto = allCov.filter(c => ["Exacta", "Similar", "IA", "Aprendida"].includes(c.tipo) && c.respuesta).length;
+    const stIA = allCov.filter(c => c.tipo === "IA" && c.respuesta).length;
+    const stPend = allCov.filter(c => c.tipo === "Pendiente" || !c.respuesta).length;
+    const stRev = allCov.filter(needsReview).length;
+    const stMin = Math.round((stAuto * 40) / 60);
+    const stSaved = stMin >= 60 ? `${Math.floor(stMin / 60)} h ${stMin % 60} min` : `${stMin} min`;
+    const stPct = stTotal ? Math.round((allCov.filter(c => c.respuesta).length / stTotal) * 100) : 0;
+
+    const summary = [
+      ["AUTO-COTIZADOR · REPORTE DE COTIZACIÓN"],
+      [`Archivo: ${fileName || "(sin nombre)"}`],
+      [`Generado: ${new Date().toLocaleString()}`],
+      [],
+      ["RESUMEN EJECUTIVO", ""],
+      ["Total de ítems", stTotal],
+      ["Respondidas automáticamente", stAuto],
+      ["   · de ellas, por IA", stIA],
+      ["Pendientes", stPend],
+      ["Por revisar", stRev],
+      ["Completado", `${stPct}%`],
+      ["Ahorro de tiempo estimado", stSaved],
+      [],
+      ["DETALLE DE RESPUESTAS"],
+      ["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN", "¿REVISAR?"],
+    ];
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
       coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || "(vacío)", c.tipo, needsReview(c) ? "⚠ REVISAR" : ""]));
-      summary.push(["", "", "", "", ""]);
     });
     const wsS = XLSX.utils.aoa_to_sheet(summary);
-    wsS["!cols"] = [{ wch: 22 }, { wch: 65 }, { wch: 65 }, { wch: 12 }, { wch: 12 }];
+    wsS["!cols"] = [{ wch: 24 }, { wch: 65 }, { wch: 65 }, { wch: 12 }, { wch: 12 }];
+    // Une el título y los encabezados de sección a lo ancho para que se vean limpios.
+    wsS["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 13, c: 0 }, e: { r: 13, c: 4 } },
+    ];
     const SUMMARY_NAME = "✓ Respuestas";
     // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
     // si solo se borra de Sheets, book_append_sheet lanza "already exists".
