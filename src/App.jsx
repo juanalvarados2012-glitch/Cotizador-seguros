@@ -941,8 +941,11 @@ export default function AutoCotizador() {
       const arr = XLSX.write(wbk, { bookType: "xlsx", type: "array" });
       const workbook = XLSX.read(arr, { type: "array", cellStyles: true, cellNF: true });
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
-      sessionBytesRef.current = arr.buffer.slice(0);
-      idbSet({ fileName: "DEMO - Ejemplo.xlsx", bytes: arr.buffer.slice(0), ts: Date.now() }).catch(() => {});
+      // XLSX.write con type:"array" devuelve un ArrayBuffer (no un Uint8Array),
+      // así que se copia con slice() directamente, sin .buffer.
+      const demoBytes = arr.slice(0);
+      sessionBytesRef.current = demoBytes;
+      idbSet({ fileName: "DEMO - Ejemplo.xlsx", bytes: demoBytes, ts: Date.now() }).catch(() => {});
       setWb(workbook);
       setFileName("DEMO - Ejemplo.xlsx");
       setSheets(extracted);
