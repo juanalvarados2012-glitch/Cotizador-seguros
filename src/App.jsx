@@ -788,6 +788,50 @@ export default function AutoCotizador() {
     }
   }, [notify]);
 
+  // Modo demo: genera un Excel de ejemplo en memoria y lo carga por el flujo
+  // normal, para presentar la app sin usar un archivo real de un cliente.
+  const loadDemo = useCallback(async () => {
+    setParsing(true);
+    try {
+      const XLSX = await getXLSX();
+      const mk = (rows) => XLSX.utils.aoa_to_sheet([["COBERTURA / ÍTEM", "RESPUESTA ASEGURADORA"], ...rows.map(r => [r, ""])]);
+      const wbk = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wbk, mk([
+        "Incendio y/o rayo y/o humo y/o explosión",
+        "Terremoto temblor erupción volcánica maremoto",
+        "Lluvia e inundación por desbordamiento",
+        "Robo y/o asalto con violencia a las instalaciones",
+        "Responsabilidad civil frente a terceros",
+        "Rotura accidental de vidrios y cristales",
+        "Daños por agua a mercadería almacenada",
+        "Gastos de remoción de escombros tras siniestro",
+      ]), "Multirriesgo");
+      XLSX.utils.book_append_sheet(wbk, mk([
+        "Deducible para rotura de vidrios",
+        "Deducible robo y asalto",
+        "Deducible terremoto y eventos de la naturaleza",
+        "Deducible responsabilidad civil",
+      ]), "Deducibles");
+      const arr = XLSX.write(wbk, { bookType: "xlsx", type: "array" });
+      const workbook = XLSX.read(arr, { type: "array", cellStyles: true, cellNF: true });
+      const extracted = extractCoverages(workbook, kbRef.current, XLSX);
+      sessionBytesRef.current = arr.buffer.slice(0);
+      idbSet({ fileName: "DEMO - Ejemplo.xlsx", bytes: arr.buffer.slice(0), ts: Date.now() }).catch(() => {});
+      setWb(workbook);
+      setFileName("DEMO - Ejemplo.xlsx");
+      setSheets(extracted);
+      setSearch(""); setFilter("todas");
+      setActive(Object.keys(extracted)[0] || null);
+      setStep("review");
+      notify("ok", "Modo demo: archivo de ejemplo cargado. Prueba todo sin un archivo real.");
+    } catch (e) {
+      console.error(e);
+      notify("error", `No se pudo cargar el demo: ${e.message || "error"}.`);
+    } finally {
+      setParsing(false);
+    }
+  }, [notify]);
+
   const processAI = async () => {
     const names = Object.keys(sheets);
     const sheetsConPend = names.filter(n =>
