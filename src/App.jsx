@@ -1240,8 +1240,14 @@ export default function AutoCotizador() {
                 );
               })}
             </div>
-            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>
-              Los archivos se guardan en este navegador/dispositivo. Para respaldarlos, usa "⬇️ Exportar" en cada uno.
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button style={sx.btnSm} onClick={backupAll}>💾 Respaldar todo</button>
+              <button style={sx.btnSm} onClick={() => backupFileRef.current?.click()}>♻️ Restaurar</button>
+              <input ref={backupFileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+                onChange={e => restoreAll(e.target.files[0])} />
+              <span style={{ fontSize: 10.5, color: C.muted, flex: 1, minWidth: 160, lineHeight: 1.5 }}>
+                Guarda memoria + historial en un archivo. Útil para cambiar de equipo o no perder el trabajo.
+              </span>
             </div>
           </div>
         </div>
