@@ -37,6 +37,10 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 - Nota: la clave interna de `localStorage` se mantuvo para no borrar la memoria.
 
 ### Arreglos de funcionamiento (rama claude/export-update-delays)
+- **Datos por usuario:** la memoria y el historial ahora se guardan por cuenta
+  de Clerk (scope = userId). Las claves de localStorage y la base de IndexedDB
+  llevan el id del usuario, así dos empleados en el mismo navegador no comparten
+  datos. La primera vez de cada usuario migra los datos antiguos (sin cuenta).
 - **Autenticación con Clerk:** login obligatorio (pantalla de inicio de sesión
   antes de usar la app) y botón de cuenta para cerrar sesión. Requiere
   `VITE_CLERK_PUBLISHABLE_KEY` en el navegador (con prefijo VITE_) y

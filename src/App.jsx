@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, Fragment } from "react";
-import { UserButton } from "@clerk/clerk-react";
+import { UserButton, useUser } from "@clerk/clerk-react";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -25,21 +25,36 @@ const storage = {
   async set(key, value) { localStorage.setItem(key, value); return { key, value }; },
 };
 
-// ─── Autoguardado de sesión ─────────────────────────────────────────────────
-// Las respuestas (ligeras) van en localStorage; el archivo original (pesado)
-// en IndexedDB, para poder reconstruir el Excel y exportar tras recargar.
-const SESSION_META_KEY = "cotizador_sesion_v1";
-const IDB_NAME = "cotizador_sesion";
+// ─── Almacenamiento por usuario (scope = cuenta de Clerk) ───────────────────
+// Cada usuario tiene su propia memoria e historial: las claves de localStorage
+// y la base de datos de IndexedDB llevan el id de su cuenta. Así dos empleados
+// que usan el mismo navegador no comparten datos.
+let SCOPE = "anon";
+function setScope(id) { SCOPE = id || "anon"; }
+
+// Claves de localStorage (dependen del usuario activo).
+const kbKey        = () => `cotizador_kb_${SCOPE}`;
+const kbBackupKey  = () => `cotizador_kb_${SCOPE}_backup`;
+const sessionKey   = () => `cotizador_sesion_${SCOPE}`;
+const backupTsKey  = () => `cotizador_kb_backup_ts_${SCOPE}`;
+
+// Claves antiguas (globales, antes de tener cuentas) — solo para migrar una vez.
+const OLD_KB_KEY = "cotizador_condor_kb_v1";
+const OLD_SESSION_KEY = "cotizador_sesion_v1";
+const OLD_IDB_NAME = "cotizador_sesion";
+
+// IndexedDB: una base de datos por usuario. Los nombres de los almacenes (store)
+// son los mismos dentro de cada base.
 const IDB_STORE = "archivo";
 const IDB_KEY = "actual";
-// Historial de archivos completados: metadatos ligeros (para la lista) y datos
-// pesados (respuestas + bytes del Excel, solo se cargan al abrir un archivo).
 const HIST_META = "historial";       // { id, fileName, ts, total, answered, pending }
 const HIST_DATA = "historial_data";  // { id, sheets, bytes }
 
+function idbDbName() { return `cotizador_${SCOPE}`; }
+
 function idbOpen() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 2);
+    const req = indexedDB.open(idbDbName(), 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
@@ -121,6 +136,52 @@ async function histDelete(id) {
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); resolve(); };
   });
+}
+
+// Copia (una sola vez) la base de datos global antigua a la del usuario actual:
+// el archivo de sesión y todo el historial. No borra la antigua.
+async function migrateOldIdb() {
+  if (!indexedDB.databases) {
+    // Algunos navegadores no listan bases; intentamos abrir la antigua igual.
+  }
+  const oldDb = await new Promise((resolve) => {
+    const req = indexedDB.open(OLD_IDB_NAME, 2);
+    req.onupgradeneeded = () => { try { req.transaction.abort(); } catch {} }; // no crear si no existía
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  }).catch(() => null);
+  if (!oldDb) return;
+  const has = (n) => oldDb.objectStoreNames.contains(n);
+  try {
+    // Sesión (archivo actual)
+    if (has(IDB_STORE)) {
+      const rec = await new Promise((res) => {
+        const tx = oldDb.transaction(IDB_STORE, "readonly");
+        const r = tx.objectStore(IDB_STORE).get(IDB_KEY);
+        r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
+      });
+      if (rec) await idbSet(rec);
+    }
+    // Historial
+    if (has(HIST_META) && has(HIST_DATA)) {
+      const metas = await new Promise((res) => {
+        const tx = oldDb.transaction(HIST_META, "readonly");
+        const r = tx.objectStore(HIST_META).getAll();
+        r.onsuccess = () => res(r.result || []); r.onerror = () => res([]);
+      });
+      for (const m of metas) {
+        const d = await new Promise((res) => {
+          const tx = oldDb.transaction(HIST_DATA, "readonly");
+          const r = tx.objectStore(HIST_DATA).get(m.id);
+          r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
+        });
+        await histSave({ ...m, sheets: d && d.sheets ? d.sheets : null, bytes: d && d.bytes ? d.bytes : null });
+      }
+    }
+  } finally {
+    oldDb.close();
+  }
 }
 
 // ¿La respuesta conviene que un humano la revise? (baja confianza, REVISAR, match flojo)
@@ -229,8 +290,6 @@ const SEED_KB = [
   { cobertura: "Deducible equipo y maquinaria", respuesta: "20% del valor del siniestro, mínimo $1,000" },
   { cobertura: "Deducible responsabilidad civil", respuesta: "10% del valor del siniestro, mínimo $500" },
 ].map(k => ({ ...k, count: 1 }));
-
-const STORAGE_KEY = "cotizador_condor_kb_v1";
 
 // ─── Colores ──────────────────────────────────────────────────────────────────
 const C = {
@@ -462,6 +521,8 @@ function badge(tipo) {
 
 // ─── Componente ─────────────────────────────────────────────────────────────────
 export default function AutoCotizador() {
+  const { user, isLoaded: userLoaded } = useUser();
+  const userId = user?.id || null;
   const [step, setStep] = useState("upload");
   const [fileName, setFileName] = useState("");
   const [sheets, setSheets] = useState({});
@@ -481,9 +542,7 @@ export default function AutoCotizador() {
   const [showHist, setShowHist] = useState(false); // panel de historial
   const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
   const [showPriv, setShowPriv] = useState(false); // panel de privacidad
-  const [kbBackupTs, setKbBackupTs] = useState(() => {
-    try { return Number(localStorage.getItem("cotizador_kb_backup_ts")) || 0; } catch { return 0; }
-  });
+  const [kbBackupTs, setKbBackupTs] = useState(0);
   const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
   const kbRef = useRef(SEED_KB);
@@ -513,63 +572,85 @@ export default function AutoCotizador() {
     if (ms) setTimeout(() => setToast(t => (t && t.msg === msg ? null : t)), ms);
   }, []);
 
-  // Cargar KB persistida
+  // Cargar memoria + sesión del USUARIO activo (se re-ejecuta al cambiar de
+  // cuenta). La primera vez de cada usuario migra los datos antiguos (globales).
   useEffect(() => {
+    if (!userLoaded) return;
+    setScope(userId);
+    let cancelled = false;
     (async () => {
+      // Reinicia el estado visible antes de cargar el del usuario nuevo.
+      setKbReady(false);
       try {
-        const r = await storage.get(STORAGE_KEY);
-        if (r && r.value) {
-          const stored = JSON.parse(r.value);
-          // unir semilla con aprendidas (preferir aprendidas)
-          const map = new Map(SEED_KB.map(k => [normalize(k.cobertura), k]));
-          stored.forEach(k => map.set(normalize(k.cobertura), k));
-          const merged = [...map.values()];
-          setKb(merged); kbRef.current = merged;
-        } else {
-          await storage.set(STORAGE_KEY, JSON.stringify(SEED_KB));
+        // ── Migración única de los datos antiguos (sin cuenta) al usuario ──
+        const migFlag = `cotizador_migrado_${SCOPE}`;
+        if (!localStorage.getItem(migFlag)) {
+          try {
+            const oldKb = localStorage.getItem(OLD_KB_KEY);
+            if (oldKb && !localStorage.getItem(kbKey())) localStorage.setItem(kbKey(), oldKb);
+            const oldSes = localStorage.getItem(OLD_SESSION_KEY);
+            if (oldSes && !localStorage.getItem(sessionKey())) localStorage.setItem(sessionKey(), oldSes);
+            await migrateOldIdb().catch(() => {});
+          } catch { /* la migración es best-effort */ }
+          localStorage.setItem(migFlag, "1");
         }
-      } catch (e) { /* primera vez o sin storage */ }
-      setKbReady(true);
-    })();
-  }, []);
 
-  // ── Recuperar sesión anterior (no perder el trabajo al recargar) ──────────
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = localStorage.getItem(SESSION_META_KEY);
-        if (!raw) return;
-        const meta = JSON.parse(raw);
-        if (!meta || !meta.sheets || Object.keys(meta.sheets).length === 0) return;
-        setSheets(meta.sheets);
-        setFileName(meta.fileName || "");
-        setActive(meta.active || Object.keys(meta.sheets)[0] || null);
-        setStep("review");
-        // Reconstruir el workbook desde los bytes guardados (para poder exportar).
-        const rec = await idbGet().catch(() => null);
-        if (rec && rec.bytes) {
-          const XLSX = await getXLSX();
-          setWb(XLSX.read(rec.bytes, { type: "array", cellStyles: true, cellNF: true }));
-          sessionBytesRef.current = rec.bytes;
+        // ── Memoria del usuario ──
+        const r = await storage.get(kbKey());
+        if (!cancelled) {
+          if (r && r.value) {
+            const stored = JSON.parse(r.value);
+            const map = new Map(SEED_KB.map(k => [normalize(k.cobertura), k]));
+            stored.forEach(k => map.set(normalize(k.cobertura), k));
+            const merged = [...map.values()];
+            setKb(merged); kbRef.current = merged;
+          } else {
+            setKb(SEED_KB); kbRef.current = SEED_KB;
+            await storage.set(kbKey(), JSON.stringify(SEED_KB));
+          }
+          try { setKbBackupTs(Number(localStorage.getItem(backupTsKey())) || 0); } catch {}
         }
-        notify("info", `Sesión recuperada: ${meta.fileName || "archivo"}. Usa "Otro archivo" para empezar de cero.`, 7000);
+      } catch { /* primera vez o sin storage */ }
+      if (!cancelled) setKbReady(true);
+
+      // ── Recuperar sesión anterior del usuario ──
+      try {
+        const raw = localStorage.getItem(sessionKey());
+        if (raw && !cancelled) {
+          const meta = JSON.parse(raw);
+          if (meta && meta.sheets && Object.keys(meta.sheets).length > 0) {
+            setSheets(meta.sheets);
+            setFileName(meta.fileName || "");
+            setActive(meta.active || Object.keys(meta.sheets)[0] || null);
+            setStep("review");
+            const rec = await idbGet().catch(() => null);
+            if (rec && rec.bytes && !cancelled) {
+              const XLSX = await getXLSX();
+              setWb(XLSX.read(rec.bytes, { type: "array", cellStyles: true, cellNF: true }));
+              sessionBytesRef.current = rec.bytes;
+            }
+            notify("info", `Sesión recuperada: ${meta.fileName || "archivo"}. Usa "Otro archivo" para empezar de cero.`, 7000);
+          }
+        }
       } catch { /* no había sesión previa */ }
+      if (!cancelled) refreshHist();
     })();
-  }, [notify]);
+    return () => { cancelled = true; };
+  }, [userLoaded, userId, notify]);
 
   // ── Autoguardado de las respuestas (se dispara al cambiar la sesión) ──────
   useEffect(() => {
     if (step !== "review" || !fileName || Object.keys(sheets).length === 0) return;
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(SESSION_META_KEY, JSON.stringify({ fileName, active, sheets, ts: Date.now() }));
+        localStorage.setItem(sessionKey(), JSON.stringify({ fileName, active, sheets, ts: Date.now() }));
       } catch { /* cuota llena: se omite el guardado */ }
     }, 800);
     return () => clearTimeout(t);
   }, [sheets, active, step, fileName]);
 
   const clearSession = useCallback(() => {
-    try { localStorage.removeItem(SESSION_META_KEY); } catch {}
+    try { localStorage.removeItem(sessionKey()); } catch {}
     sessionBytesRef.current = null;
     idbClear();
   }, []);
@@ -634,15 +715,12 @@ export default function AutoCotizador() {
     notify("info", "Archivo quitado del historial.");
   }, [refreshHist, notify]);
 
-  // Cargar la lista de historial al inicio (para el contador del botón).
-  useEffect(() => { refreshHist(); }, [refreshHist]);
-
   const persistKB = useCallback(async (newKb) => {
     kbRef.current = newKb; setKb(newKb);
     try {
-      await storage.set(STORAGE_KEY, JSON.stringify(newKb));
+      await storage.set(kbKey(), JSON.stringify(newKb));
       // Respaldo automático rolling (protege ante corrupción accidental).
-      localStorage.setItem(STORAGE_KEY + "_backup", JSON.stringify({ ts: Date.now(), kb: newKb }));
+      localStorage.setItem(kbBackupKey(), JSON.stringify({ ts: Date.now(), kb: newKb }));
     } catch {}
   }, []);
 
@@ -683,7 +761,7 @@ export default function AutoCotizador() {
     const date = new Date().toISOString().slice(0, 10);
     downloadJSON(`cotizador_memoria_${date}.json`, kbRef.current);
     const now = Date.now();
-    try { localStorage.setItem("cotizador_kb_backup_ts", String(now)); } catch {}
+    try { localStorage.setItem(backupTsKey(), String(now)); } catch {}
     setKbBackupTs(now);
     notify("ok", `Memoria exportada (${kbRef.current.length} respuestas).`);
   }, [notify]);
@@ -722,7 +800,7 @@ export default function AutoCotizador() {
       const date = new Date().toISOString().slice(0, 10);
       downloadJSON(`cotizador_respaldo_${date}.json`, { v: 1, ts: Date.now(), kb: kbRef.current, history });
       const now = Date.now();
-      try { localStorage.setItem("cotizador_kb_backup_ts", String(now)); } catch {}
+      try { localStorage.setItem(backupTsKey(), String(now)); } catch {}
       setKbBackupTs(now);
       notify("ok", `Respaldo creado: ${kbRef.current.length} respuestas y ${history.length} archivo(s).`);
     } catch (e) {
