@@ -1351,6 +1351,12 @@ export default function AutoCotizador() {
                 </button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
               </div>
+              <div style={{ textAlign: "center", marginTop: 12 }}>
+                <button onClick={loadDemo}
+                  style={{ ...sx.btn, background: "transparent", border: `1px solid ${C.gold}`, color: C.gold, padding: "10px 22px" }}>
+                  ▶️ Probar con datos de ejemplo
+                </button>
+              </div>
               <div style={{ display: "flex", justifyContent: "center", gap: narrow ? 12 : 22, flexWrap: "wrap", marginTop: 16, fontSize: 11, color: C.muted }}>
                 <span>🔒 API key protegida en el servidor</span>
                 <span>🧠 {kb.length} respuestas en memoria</span>
