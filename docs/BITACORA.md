@@ -37,6 +37,10 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 - Nota: la clave interna de `localStorage` se mantuvo para no borrar la memoria.
 
 ### Arreglos de funcionamiento (rama claude/export-update-delays)
+- **Autenticación con Clerk:** login obligatorio (pantalla de inicio de sesión
+  antes de usar la app) y botón de cuenta para cerrar sesión. Requiere
+  `VITE_CLERK_PUBLISHABLE_KEY` en el navegador (con prefijo VITE_) y
+  `CLERK_SECRET_KEY` en el servidor. Si falta la key, muestra un aviso claro.
 - **Listo para empresa (mejoras gratis):** panel de **🔒 Privacidad** (qué se
   guarda local, qué se envía a la IA, qué NO), tarjeta **⏱ Ahorro estimado** en
   pantalla y en el Excel, **resumen ejecutivo** en la hoja exportada, **motor de
