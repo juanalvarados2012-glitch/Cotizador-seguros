@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, Fragment } from "react";
+import { UserButton } from "@clerk/clerk-react";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -1150,6 +1151,7 @@ export default function AutoCotizador() {
               <div style={{ fontSize: 12, color: C.accentLight, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName}</div>
             </div>
           )}
+          <UserButton afterSignOutUrl="/" />
         </div>
       </div>
 
