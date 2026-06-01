@@ -488,6 +488,7 @@ export default function AutoCotizador() {
   const kbRef = useRef(SEED_KB);
   const fileRef = useRef();
   const kbFileRef = useRef();
+  const backupFileRef = useRef();
   const sessionBytesRef = useRef(null); // bytes del archivo original (para exportar tras recargar)
 
   // Responsive: detecta pantallas angostas
@@ -705,6 +706,52 @@ export default function AutoCotizador() {
       notify("error", `No se pudo importar: ${e.message || "archivo JSON inválido"}.`);
     }
   }, [persistKB, notify]);
+
+  // Respaldo completo en un clic: memoria + historial (respuestas) en un JSON.
+  // No incluye los bytes del Excel original (pesados); sí toda la memoria y el
+  // detalle de respuestas de cada archivo, que es el conocimiento valioso.
+  const backupAll = useCallback(async () => {
+    try {
+      const metas = await histList().catch(() => []);
+      const history = [];
+      for (const m of metas) {
+        const d = await histGet(m.id).catch(() => null);
+        history.push({ meta: m, sheets: d && d.sheets ? d.sheets : null });
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      downloadJSON(`cotizador_respaldo_${date}.json`, { v: 1, ts: Date.now(), kb: kbRef.current, history });
+      const now = Date.now();
+      try { localStorage.setItem("cotizador_kb_backup_ts", String(now)); } catch {}
+      setKbBackupTs(now);
+      notify("ok", `Respaldo creado: ${kbRef.current.length} respuestas y ${history.length} archivo(s).`);
+    } catch (e) {
+      notify("error", `No se pudo crear el respaldo: ${e.message || "error"}.`);
+    }
+  }, [notify]);
+
+  const restoreAll = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || !Array.isArray(data.kb)) throw new Error("estructura inválida");
+      const map = new Map(kbRef.current.map(k => [normalize(k.cobertura), k]));
+      data.kb.forEach(k => { if (k && k.cobertura) map.set(normalize(k.cobertura), { count: 1, ...k }); });
+      persistKB([...map.values()]);
+      let nFiles = 0;
+      for (const h of (data.history || [])) {
+        if (h && h.meta && h.sheets) {
+          await histSave({ ...h.meta, sheets: h.sheets, bytes: null }).catch(() => {});
+          nFiles++;
+        }
+      }
+      refreshHist();
+      notify("ok", `Respaldo restaurado: memoria y ${nFiles} archivo(s).`);
+    } catch (e) {
+      notify("error", `No se pudo restaurar: ${e.message || "archivo inválido"}.`);
+    } finally {
+      if (backupFileRef.current) backupFileRef.current.value = "";
+    }
+  }, [notify, persistKB, refreshHist]);
 
   // ── Gestión de memoria (editar/borrar) ───────────────────────────────────
   const updateKBEntry = useCallback((cobertura, respuesta) => {
