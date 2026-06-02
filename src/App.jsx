@@ -530,6 +530,7 @@ export default function AutoCotizador() {
   const [active, setActive] = useState(null);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState(""); // "X de Y coberturas"
   const [dragOver, setDragOver] = useState(false);
   const [kb, setKb] = useState(SEED_KB);
   const [kbReady, setKbReady] = useState(false);
@@ -992,9 +993,11 @@ export default function AutoCotizador() {
     // sin disparar el límite 429 de Groq. Cada lote que termina refresca la UI.
     const CONCURRENCY = Math.min(4, batches.length);
     const total = batches.length;
+    const totalPend = batches.reduce((n, b) => n + b.items.length, 0);
     let done = 0;
     let nextIdx = 0;
     let stop = false;
+    setProgressText(`0 de ${totalPend} coberturas`);
 
     const worker = async () => {
       while (!stop) {
@@ -1028,6 +1031,7 @@ export default function AutoCotizador() {
         } finally {
           done++;
           setProgress(Math.round((done / total) * 100));
+          setProgressText(`${resueltas} de ${totalPend} coberturas`);
         }
       }
     };
@@ -1039,6 +1043,7 @@ export default function AutoCotizador() {
     learnMany(learned);
 
     setProgress(100);
+    setProgressText("");
     setSheets({ ...updated });
     setProcessing(false);
 
@@ -1602,7 +1607,7 @@ export default function AutoCotizador() {
 
             <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
               <button style={{ ...sx.btnGold, opacity: processing ? 0.6 : 1 }} onClick={processAI} disabled={processing}>
-                {processing ? `Procesando IA... ${progress}%` : `⚡ Completar pendientes con IA (${pend})`}
+                {processing ? `Procesando IA... ${progress}%${progressText ? ` (${progressText})` : ""}` : `⚡ Completar pendientes con IA (${pend})`}
               </button>
               <button style={sx.btn} onClick={exportFile}>⬇️ Exportar archivo respondido</button>
               <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>Otro archivo</button>
@@ -1611,6 +1616,7 @@ export default function AutoCotizador() {
             {processing && (
               <div style={{ background: "#0A1F3A", border: `1px solid ${C.accent}`, borderRadius: 8, padding: "12px 18px", marginBottom: 14, fontSize: 12 }}>
                 🤖 Analizando lo que no está en memoria... {progress}%
+                {progressText && <span style={{ color: C.muted }}> · {progressText}</span>}
               </div>
             )}
 
