@@ -540,6 +540,7 @@ export default function AutoCotizador() {
   const [filter, setFilter] = useState("todas"); // todas | pendientes | respondidas
   const [showKB, setShowKB] = useState(false);   // panel de memoria
   const [kbSearch, setKbSearch] = useState("");
+  const [histSearch, setHistSearch] = useState(""); // buscar en el historial
   const [showHist, setShowHist] = useState(false); // panel de historial
   const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
   const [showPriv, setShowPriv] = useState(false); // panel de privacidad
@@ -1299,6 +1300,12 @@ export default function AutoCotizador() {
               <span style={{ fontSize: 14, fontWeight: 700, color: C.accentLight }}>📁 Historial · {histItems.length} archivo(s)</span>
               <button onClick={() => setShowHist(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
             </div>
+            {histItems.length > 0 && (
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}` }}>
+                <input value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="🔎 Buscar archivo por nombre..."
+                  style={{ width: "100%", background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
+              </div>
+            )}
             <div style={{ padding: "10px 14px", overflowY: "auto" }}>
               {histItems.length === 0 && (
                 <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 28, lineHeight: 1.6 }}>
@@ -1306,7 +1313,7 @@ export default function AutoCotizador() {
                   Cuando exportes un archivo o cambies a otro, quedará aquí para reabrirlo.
                 </div>
               )}
-              {histItems.map(h => {
+              {histItems.filter(h => normalize(h.fileName || "").includes(normalize(histSearch))).map(h => {
                 const pctH = h.total ? Math.round((h.answered / h.total) * 100) : 0;
                 const fecha = h.ts ? new Date(h.ts).toLocaleString() : "";
                 return (
@@ -1327,6 +1334,11 @@ export default function AutoCotizador() {
                   </div>
                 );
               })}
+              {histItems.length > 0 && histItems.filter(h => normalize(h.fileName || "").includes(normalize(histSearch))).length === 0 && (
+                <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 20 }}>
+                  No hay archivos que coincidan con "{histSearch}".
+                </div>
+              )}
             </div>
             <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button style={sx.btnSm} onClick={backupAll}>💾 Respaldar todo</button>
