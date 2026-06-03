@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, Fragment } from "react";
-import { UserButton, useUser } from "@clerk/clerk-react";
+import { UserButton, OrganizationSwitcher, useUser, useOrganization } from "@clerk/clerk-react";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -25,10 +25,15 @@ const storage = {
   async set(key, value) { localStorage.setItem(key, value); return { key, value }; },
 };
 
-// ─── Almacenamiento por usuario (scope = cuenta de Clerk) ───────────────────
-// Cada usuario tiene su propia memoria e historial: las claves de localStorage
-// y la base de datos de IndexedDB llevan el id de su cuenta. Así dos empleados
-// que usan el mismo navegador no comparten datos.
+// ─── Almacenamiento por empresa o por usuario (scope) ───────────────────────
+// El "scope" decide de quién es la memoria y el historial:
+//   • Si el usuario pertenece a una EMPRESA (Clerk Organization) activa, el
+//     scope es `org_<idEmpresa>`: TODO el equipo de esa agencia comparte la
+//     misma memoria. Lo que aprende uno, lo aprovechan todos.
+//   • Si no hay empresa activa (uso individual), el scope es la cuenta del
+//     usuario: cada persona tiene su propia memoria (comportamiento de siempre).
+// Las claves de localStorage y la base de IndexedDB llevan ese scope, así dos
+// equipos/usuarios en el mismo navegador no comparten datos.
 let SCOPE = "anon";
 function setScope(id) { SCOPE = id || "anon"; }
 
@@ -522,7 +527,12 @@ function badge(tipo) {
 // ─── Componente ─────────────────────────────────────────────────────────────────
 export default function AutoCotizador() {
   const { user, isLoaded: userLoaded } = useUser();
+  const { organization, isLoaded: orgLoaded } = useOrganization();
   const userId = user?.id || null;
+  // Scope = empresa si hay una activa; si no, la cuenta personal del usuario.
+  const orgId = organization?.id || null;
+  const scopeId = orgId ? `org_${orgId}` : userId;
+  const isCompany = !!orgId; // ¿la memoria es compartida por una empresa?
   const [step, setStep] = useState("upload");
   const [fileName, setFileName] = useState("");
   const [sheets, setSheets] = useState({});
@@ -577,16 +587,19 @@ export default function AutoCotizador() {
   // Cargar memoria + sesión del USUARIO activo (se re-ejecuta al cambiar de
   // cuenta). La primera vez de cada usuario migra los datos antiguos (globales).
   useEffect(() => {
-    if (!userLoaded) return;
-    setScope(userId);
+    if (!userLoaded || !orgLoaded) return;
+    setScope(scopeId);
     let cancelled = false;
     (async () => {
-      // Reinicia el estado visible antes de cargar el del usuario nuevo.
+      // Reinicia el estado visible antes de cargar el del scope nuevo (al
+      // cambiar de cuenta o de empresa se recarga la memoria correspondiente).
       setKbReady(false);
       try {
-        // ── Migración única de los datos antiguos (sin cuenta) al usuario ──
+        // ── Migración única de los datos antiguos (sin cuenta) ──
+        // Solo en uso personal: una empresa no hereda datos sueltos de un
+        // navegador, arranca con la base de conocimiento semilla.
         const migFlag = `cotizador_migrado_${SCOPE}`;
-        if (!localStorage.getItem(migFlag)) {
+        if (!orgId && !localStorage.getItem(migFlag)) {
           try {
             const oldKb = localStorage.getItem(OLD_KB_KEY);
             if (oldKb && !localStorage.getItem(kbKey())) localStorage.setItem(kbKey(), oldKb);
@@ -638,7 +651,7 @@ export default function AutoCotizador() {
       if (!cancelled) refreshHist();
     })();
     return () => { cancelled = true; };
-  }, [userLoaded, userId, notify]);
+  }, [userLoaded, orgLoaded, scopeId, notify]);
 
   // ── Autoguardado de las respuestas (se dispara al cambiar la sesión) ──────
   useEffect(() => {
@@ -1227,10 +1240,11 @@ export default function AutoCotizador() {
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>HISTORIAL</div>
             <div style={{ fontSize: 13, color: C.accentLight }}>📁 {histItems.length} archivo(s)</div>
           </button>
-          <button onClick={() => setShowKB(true)} title="Gestionar memoria"
+          <button onClick={() => setShowKB(true)}
+            title={isCompany ? `Memoria compartida de ${organization?.name || "tu empresa"}` : "Gestionar tu memoria"}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>MEMORIA</div>
-            <div style={{ fontSize: 13, color: C.green }}>🧠 {kb.length} respuestas</div>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{isCompany ? "MEMORIA · EQUIPO" : "MEMORIA"}</div>
+            <div style={{ fontSize: 13, color: C.green }}>{isCompany ? "👥" : "🧠"} {kb.length} respuestas</div>
           </button>
           {fileName && step === "review" && (
             <div style={{ textAlign: "right" }}>
@@ -1238,6 +1252,12 @@ export default function AutoCotizador() {
               <div style={{ fontSize: 12, color: C.accentLight, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName}</div>
             </div>
           )}
+          <OrganizationSwitcher
+            hidePersonal={false}
+            afterCreateOrganizationUrl="/"
+            afterSelectOrganizationUrl="/"
+            afterLeaveOrganizationUrl="/"
+          />
           <UserButton afterSignOutUrl="/" />
         </div>
       </div>
@@ -1268,8 +1288,12 @@ export default function AutoCotizador() {
             </div>
             <div style={{ padding: "16px 18px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.7, color: C.text }}>
               <div style={{ marginBottom: 14 }}>
-                <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>✅ Qué se queda en tu equipo</div>
-                Tu memoria de respuestas y el historial de archivos se guardan <b>solo en este navegador/dispositivo</b>. No se suben a ningún servidor nuestro.
+                <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>✅ Dónde se guardan tus datos</div>
+                {isCompany ? (
+                  <>La memoria de respuestas y el historial son <b>compartidos por tu empresa ({organization?.name || "tu agencia"})</b>: lo que aprende un compañero, lo aprovecha todo el equipo. Hoy se guardan <b>en este navegador/dispositivo</b>; no se suben a ningún servidor nuestro.</>
+                ) : (
+                  <>Tu memoria de respuestas y el historial de archivos se guardan <b>solo en este navegador/dispositivo</b>. No se suben a ningún servidor nuestro.</>
+                )}
               </div>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ color: C.accentLight, fontWeight: 700, marginBottom: 4 }}>🤖 Qué se envía a la IA</div>

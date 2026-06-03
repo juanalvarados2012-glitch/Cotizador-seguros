@@ -21,6 +21,31 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 
 ## ✅ Trabajo realizado en esta sesión
 
+### Giro de modelo: de suscripción individual a vender a brokers (B2B)
+- **Decisión de negocio:** la app ya no apunta a suscripción individual, sino a
+  **venderla a agencias/brokers de USA** como herramienta para su equipo
+  (licencia por empresa). Idioma objetivo: **bilingüe ES/EN** (pendiente).
+- **Memoria compartida por empresa (Clerk Organizations):** el "scope" de la
+  memoria y el historial ahora puede ser una **empresa**, no solo una persona.
+  - Si el usuario tiene una **Organización (empresa) activa** en Clerk, el scope
+    es `org_<idEmpresa>`: **todo el equipo comparte la misma memoria** (lo que
+    aprende uno lo aprovechan todos). La tarjeta de memoria muestra "EQUIPO 👥".
+  - Si no hay empresa activa, sigue el comportamiento de siempre (memoria
+    personal por cuenta). **Cambio 100% compatible hacia atrás.**
+  - Se agregó `<OrganizationSwitcher>` en el encabezado para crear/cambiar de
+    empresa e invitar miembros. El panel de Privacidad explica si la memoria es
+    compartida por la empresa o personal.
+  - La migración de datos antiguos (sin cuenta) solo aplica a uso personal: una
+    empresa arranca limpia con la base de conocimiento semilla.
+  - **Pendiente de configuración:** habilitar **Organizations** en el panel de
+    Clerk (Dashboard → Organizations → Enable) para que el selector funcione.
+
+### Próximos pasos de este giro (no hechos aún)
+- Interfaz **bilingüe ES/EN** (detectar idioma del navegador; botón de cambio).
+- **Landing en inglés** orientado a agencias ("your team quotes faster").
+- **Cobro por empresa:** empezar manual (factura/contrato); luego Stripe con
+  plan por agencia. Quitar el texto residual de "suscripción" del pie.
+
 ### Publicación / Vercel
 - Se desactivó la **Deployment Protection** para que la app sea pública.
 - Se aclaró que Vercel publica desde `main`; los cambios deben ir a esa rama.
