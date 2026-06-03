@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Auto-Cotizador — Presentación</title>
+<style>
+  :root{
+    --bg:#0B0F1A; --surface:#131929; --border:#1E2D45; --accent:#1A6FD8;
+    --accentLight:#3A8EF8; --gold:#C4975A; --green:#2ECC71; --text:#E8EDF5; --muted:#6B7FA0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:var(--text);
+    background:
+      radial-gradient(900px circle at 12% -8%, rgba(26,111,216,.18), transparent 45%),
+      radial-gradient(760px circle at 96% -2%, rgba(196,151,90,.12), transparent 46%),
+      var(--bg);
+    overflow:hidden;
+  }
+  .deck{height:100vh;display:flex;align-items:center;justify-content:center;padding:6vh 8vw}
+  .slide{display:none;width:100%;max-width:980px;animation:fade .4s ease}
+  .slide.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .kicker{color:var(--gold);letter-spacing:3px;text-transform:uppercase;font-size:13px;font-weight:700;margin-bottom:18px}
+  h1{font-size:clamp(30px,5.2vw,58px);line-height:1.05;letter-spacing:-1px;margin-bottom:18px}
+  h2{font-size:clamp(24px,3.6vw,40px);line-height:1.1;letter-spacing:-.5px;margin-bottom:26px}
+  .grad{background:linear-gradient(90deg,var(--accentLight),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  p.lead{font-size:clamp(16px,2vw,21px);color:#Afb8cc;line-height:1.6;max-width:760px}
+  ul{list-style:none;display:grid;gap:14px;margin-top:8px}
+  li{display:flex;gap:14px;align-items:flex-start;font-size:clamp(15px,1.9vw,20px);line-height:1.5;
+     background:rgba(14,24,40,.55);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  li .ic{font-size:24px;line-height:1}
+  li b{color:var(--text)}
+  li span.t{color:#C7D2E4}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:10px}
+  .card{background:rgba(14,24,40,.55);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center}
+  .card .n{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#1555B0);
+    color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;margin:0 auto 12px}
+  .card h3{font-size:16px;margin-bottom:6px}
+  .card p{font-size:13.5px;color:var(--muted);line-height:1.5}
+  .price{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:6px}
+  .tier{background:rgba(14,24,40,.55);border:1px solid var(--border);border-radius:14px;padding:22px;text-align:center}
+  .tier.feat{border-color:var(--gold);box-shadow:0 0 0 3px rgba(196,151,90,.12)}
+  .tier .name{color:var(--gold);font-weight:700;letter-spacing:1px;text-transform:uppercase;font-size:13px}
+  .tier .amt{font-size:34px;font-weight:800;margin:8px 0;letter-spacing:-1px}
+  .tier .amt small{font-size:14px;color:var(--muted);font-weight:600}
+  .tier .desc{font-size:13px;color:var(--muted)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .two .box{border-radius:14px;padding:20px}
+  .yes{background:#0C1A12;border:1px solid #1C3A28}
+  .no{background:#160F0F;border:1px solid #3A2020}
+  .yes h3{color:var(--green)} .no h3{color:#E74C3C}
+  .two h3{font-size:15px;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px}
+  .two .row{display:flex;gap:10px;font-size:15px;line-height:1.5;margin-bottom:10px;color:#C7D2E4}
+  .logo{display:inline-flex;align-items:center;gap:12px;margin-bottom:26px}
+  .logo .mark{width:46px;height:46px;border-radius:10px;background:linear-gradient(135deg,var(--gold),#E8B96A);
+    color:var(--bg);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px}
+  .logo .name{font-weight:800;letter-spacing:1px;font-size:18px}
+  .foot{position:fixed;bottom:18px;left:0;right:0;display:flex;justify-content:space-between;align-items:center;
+    padding:0 28px;color:var(--muted);font-size:12px}
+  .dots{display:flex;gap:7px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--border);cursor:pointer;transition:.2s}
+  .dot.on{background:var(--gold);transform:scale(1.25)}
+  .hint{opacity:.6}
+  .big{font-size:clamp(40px,8vw,84px);font-weight:800;letter-spacing:-2px;line-height:1}
+  .muted{color:var(--muted)}
+  .center{text-align:center}
+  .nav{position:fixed;top:0;height:100vh;width:14vw;cursor:pointer;z-index:5}
+  .nav.l{left:0} .nav.r{right:0}
+</style>
+</head>
+<body>
+<div class="nav l" onclick="go(-1)"></div>
+<div class="nav r" onclick="go(1)"></div>
+<div class="deck">
+
+  <!-- 1 -->
+  <section class="slide active">
+    <div class="logo"><div class="mark">C</div><div class="name">AUTO-COTIZADOR</div></div>
+    <div class="kicker">Suscripción de Ramos Generales</div>
+    <h1>Responda las plantillas de los brokers<br><span class="grad">en minutos, no en horas</span></h1>
+    <p class="lead">Una herramienta que autollena las coberturas con el criterio de su equipo, usa IA solo para lo nuevo y le devuelve el mismo Excel respondido.</p>
+    <p class="lead" style="margin-top:24px;color:var(--muted)">Presentado por [Tu nombre] · [Teléfono] · [Correo]</p>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide">
+    <div class="kicker">El problema</div>
+    <h2>Suscribir a mano no escala</h2>
+    <ul>
+      <li><span class="ic">⏳</span><span class="t">Cada plantilla del broker se responde cobertura por cobertura, <b>a mano</b>.</span></li>
+      <li><span class="ic">🔁</span><span class="t">Se busca en cotizaciones viejas qué se respondió antes. <b>Horas por archivo.</b></span></li>
+      <li><span class="ic">⚠️</span><span class="t">El criterio <b>depende de cada suscriptor</b> y aparecen errores e inconsistencias.</span></li>
+    </ul>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide">
+    <div class="kicker">La solución</div>
+    <h2>Memoria + IA que <span class="grad">aprende de su equipo</span></h2>
+    <ul>
+      <li><span class="ic">⚡</span><span class="t"><b>Autollena al instante</b> las coberturas conocidas, con el criterio del equipo.</span></li>
+      <li><span class="ic">🤖</span><span class="t"><b>IA solo para lo nuevo</b>, con indicador de confianza y marca de "por revisar".</span></li>
+      <li><span class="ic">🧠</span><span class="t"><b>Aprende de cada corrección:</b> la próxima vez se llena sola. Mejora con el uso.</span></li>
+      <li><span class="ic">📄</span><span class="t"><b>Exporta el mismo Excel</b> del broker, respondido + hoja resumen.</span></li>
+    </ul>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide">
+    <div class="kicker">Cómo funciona</div>
+    <h2>De Excel del broker a cotización lista en 4 pasos</h2>
+    <div class="cards">
+      <div class="card"><div class="n">1</div><h3>Sube</h3><p>La plantilla del broker (.xlsx, .xls, .xlsm).</p></div>
+      <div class="card"><div class="n">2</div><h3>Autollena</h3><p>Lo conocido se responde solo, al instante.</p></div>
+      <div class="card"><div class="n">3</div><h3>IA</h3><p>Un clic resuelve lo que no tiene precedente.</p></div>
+      <div class="card"><div class="n">4</div><h3>Exporta</h3><p>El mismo archivo respondido + resumen.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide center">
+    <div class="kicker">Demo en vivo</div>
+    <h2>Veámoslo con una de sus plantillas</h2>
+    <p class="lead center" style="margin:0 auto">[ Aquí compartes pantalla y muestras la app: subir → autollenar → IA → editar/aprender → exportar ]</p>
+    <div class="big grad" style="margin-top:34px">▶</div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide">
+    <div class="kicker">El resultado</div>
+    <h2>Horas → <span class="grad">minutos</span></h2>
+    <div class="two">
+      <div class="box no">
+        <h3>😵 Hoy, a mano</h3>
+        <div class="row">✕ &nbsp;Copiar y responder una por una</div>
+        <div class="row">✕ &nbsp;Buscar precedentes en archivos viejos</div>
+        <div class="row">✕ &nbsp;Criterio disperso y errores de tipeo</div>
+      </div>
+      <div class="box yes">
+        <h3>⚡ Con Auto-Cotizador</h3>
+        <div class="row">✓ &nbsp;Coberturas conocidas, llenas solas</div>
+        <div class="row">✓ &nbsp;Criterio consistente en todo el equipo</div>
+        <div class="row">✓ &nbsp;Mismo formato, listo para reenviar</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide">
+    <div class="kicker">Seguridad y datos</div>
+    <h2>Su información, bajo control</h2>
+    <ul>
+      <li><span class="ic">✅</span><span class="t">La memoria y el historial <b>quedan en su equipo</b>. No se suben a un servidor nuestro.</span></li>
+      <li><span class="ic">🤖</span><span class="t">A la IA solo se envía <b>el texto de la cobertura</b> — nada de nombres, pólizas ni valores.</span></li>
+      <li><span class="ic">🔒</span><span class="t">Opción de <b>IA privada/local</b> para información altamente confidencial.</span></li>
+    </ul>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide">
+    <div class="kicker">Inversión</div>
+    <h2>Pruébenlo sin riesgo</h2>
+    <div class="price">
+      <div class="tier feat"><div class="name">Piloto</div><div class="amt">Gratis<small> / 30 días</small></div><div class="desc">Con sus archivos reales y un criterio de éxito acordado.</div></div>
+      <div class="tier"><div class="name">Starter</div><div class="amt">$249<small> /mes</small></div><div class="desc">Hasta 3 suscriptores. Sin permanencia.</div></div>
+      <div class="tier"><div class="name">Pro</div><div class="amt">$499<small> /mes</small></div><div class="desc">Hasta 8 suscriptores. Soporte incluido.</div></div>
+    </div>
+    <p class="lead" style="margin-top:22px">Un suscriptor cuesta ~$1.500/mes: el plan <b>se paga solo</b> en pocos días de tiempo recuperado.</p>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide center">
+    <div class="logo" style="justify-content:center"><div class="mark">C</div><div class="name">AUTO-COTIZADOR</div></div>
+    <h2>¿Arrancamos un piloto?</h2>
+    <p class="lead center" style="margin:0 auto">Gratis, 30 días, con sus plantillas reales. Yo me encargo del onboarding.</p>
+    <p class="lead center muted" style="margin:26px auto 0">Gracias por su tiempo · [Tu nombre] · [Teléfono] · [Correo]</p>
+  </section>
+
+</div>
+
+<div class="foot">
+  <span class="hint">← → para navegar</span>
+  <div class="dots" id="dots"></div>
+  <span class="hint" id="counter"></span>
+</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dots=document.getElementById('dots');
+  const counter=document.getElementById('counter');
+  let i=0;
+  slides.forEach((_,k)=>{const d=document.createElement('div');d.className='dot'+(k===0?' on':'');d.onclick=()=>set(k);dots.appendChild(d)});
+  function set(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    [...dots.children].forEach((d,k)=>d.classList.toggle('on',k===i));
+    counter.textContent=(i+1)+' / '+slides.length;
+  }
+  function go(d){set(i+d)}
+  set(0);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown')go(1);
+    if(e.key==='ArrowLeft'||e.key==='PageUp')go(-1);
+    if(e.key==='Home')set(0); if(e.key==='End')set(slides.length-1);
+  });
+</script>
+</body>
+</html>
