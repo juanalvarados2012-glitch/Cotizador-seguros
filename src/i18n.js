@@ -116,6 +116,9 @@ const es = {
   kbNoBackup: "⚠ Sin respaldo aún",
   kbBase: "↺ Base",
   kbBaseConfirm: "¿Restaurar la memoria base? Se perderán las respuestas aprendidas que no estén en la semilla.",
+  kbClear: "🗑 Vaciar",
+  kbClearConfirm: "¿Vaciar TODA la memoria? Quedará en 0 respuestas y la app aprenderá desde cero. (Tip: respalda primero con ⬇️ Exportar.)",
+  msgKBCleared: "Memoria vaciada. La app aprenderá desde cero.",
   kbNoMatch: "Sin coincidencias.",
   kbDeleteTitle: "Borrar de la memoria",
 
@@ -327,6 +330,9 @@ const en = {
   kbNoBackup: "⚠ No backup yet",
   kbBase: "↺ Base",
   kbBaseConfirm: "Restore the base memory? Learned answers not in the seed will be lost.",
+  kbClear: "🗑 Empty",
+  kbClearConfirm: "Empty the ENTIRE memory? It will go to 0 answers and the app will learn from scratch. (Tip: back up first with ⬇️ Export.)",
+  msgKBCleared: "Memory emptied. The app will learn from scratch.",
   kbNoMatch: "No matches.",
   kbDeleteTitle: "Delete from memory",
 

@@ -588,11 +588,11 @@ export default function AutoCotizador() {
         const r = await storage.get(kbKey());
         if (!cancelled) {
           if (r && r.value) {
+            // La memoria guardada es la fuente de verdad: se usa tal cual, sin
+            // volver a mezclar la base semilla. Así, si el usuario la vació o
+            // editó, se respeta y no "reviven" las respuestas de la base.
             const stored = JSON.parse(r.value);
-            const map = new Map(SEED_KB.map(k => [normalize(k.cobertura), k]));
-            stored.forEach(k => map.set(normalize(k.cobertura), k));
-            const merged = [...map.values()];
-            setKb(merged); kbRef.current = merged;
+            setKb(stored); kbRef.current = stored;
           } else {
             setKb(SEED_KB); kbRef.current = SEED_KB;
             await storage.set(kbKey(), JSON.stringify(SEED_KB));
@@ -1379,6 +1379,12 @@ export default function AutoCotizador() {
                     persistKB(SEED_KB); notify("ok", tr.msgKBToBase);
                   }
                 }}>{tr.kbBase}</button>
+              <button style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A" }}
+                onClick={() => {
+                  if (window.confirm(tr.kbClearConfirm)) {
+                    persistKB([]); notify("ok", tr.msgKBCleared);
+                  }
+                }}>{tr.kbClear}</button>
               <input ref={kbFileRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={e => { importKB(e.target.files[0]); e.target.value = ""; }} />
             </div>
