@@ -21,6 +21,20 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 
 ## ✅ Trabajo realizado en esta sesión
 
+### Memoria semilla GENÉRICA (quita el criterio de Cóndor de la base)
+- La base de conocimiento semilla (`SEED_KB`) ya **no contiene criterio real de
+  ninguna aseguradora**: coberturas estándar del mercado con respuestas neutras
+  ("Cubierto según condiciones generales", "Sujeto a evaluación del suscriptor",
+  "Según tabla de deducibles…"). Sin límites, deducibles ni notas específicas.
+- Motivo: confidencialidad y credibilidad. La app debe **nacer neutra** y aprender
+  el criterio de cada cliente durante el uso/piloto, no traer data de un tercero.
+- También se neutralizaron referencias internas a "condor" (clave de migración
+  antigua y palabra clave del detector de columnas).
+- ⚠️ **Ojo:** en un navegador que YA usó la app, la memoria vieja sigue guardada
+  localmente. Para limpiarla en el equipo donde se hará la demo: botón
+  **"↺ Base"** del panel de Memoria (ahora carga la base genérica) o borrar los
+  datos del sitio.
+
 ### Giro de modelo: de suscripción individual a vender a brokers (B2B)
 - **Decisión de negocio:** la app ya no apunta a suscripción individual, sino a
   **venderla a agencias/brokers de USA** como herramienta para su equipo
