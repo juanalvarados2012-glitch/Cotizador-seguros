@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 import { UserButton, OrganizationSwitcher, useUser, useOrganization } from "@clerk/clerk-react";
+import { STR, detectLang, saveLang } from "./i18n";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -533,6 +534,11 @@ export default function AutoCotizador() {
   const orgId = organization?.id || null;
   const scopeId = orgId ? `org_${orgId}` : userId;
   const isCompany = !!orgId; // ¿la memoria es compartida por una empresa?
+  const [lang, setLang] = useState(detectLang);
+  const tr = STR[lang]; // textos del idioma activo (ES/EN)
+  const toggleLang = useCallback(() => {
+    setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
+  }, []);
   const [step, setStep] = useState("upload");
   const [fileName, setFileName] = useState("");
   const [sheets, setSheets] = useState({});
@@ -644,14 +650,14 @@ export default function AutoCotizador() {
               setWb(XLSX.read(rec.bytes, { type: "array", cellStyles: true, cellNF: true }));
               sessionBytesRef.current = rec.bytes;
             }
-            notify("info", `Sesión recuperada: ${meta.fileName || "archivo"}. Usa "Otro archivo" para empezar de cero.`, 7000);
+            notify("info", tr.msgSessionRestored(meta.fileName), 7000);
           }
         }
       } catch { /* no había sesión previa */ }
       if (!cancelled) refreshHist();
     })();
     return () => { cancelled = true; };
-  }, [userLoaded, orgLoaded, scopeId, notify]);
+  }, [userLoaded, orgLoaded, scopeId, notify, tr]);
 
   // ── Autoguardado de las respuestas (se dispara al cambiar la sesión) ──────
   useEffect(() => {
@@ -703,7 +709,7 @@ export default function AutoCotizador() {
   const openFromHistory = useCallback(async (id) => {
     try {
       const data = await histGet(id);
-      if (!data || !data.sheets) { notify("error", "No se pudo abrir ese archivo del historial."); return; }
+      if (!data || !data.sheets) { notify("error", tr.msgHistOpenError); return; }
       setSheets(data.sheets);
       setFileName(id);
       setActive(Object.keys(data.sheets)[0] || null);
@@ -718,17 +724,17 @@ export default function AutoCotizador() {
       } else {
         setWb(null);
       }
-      notify("ok", `Archivo abierto del historial: ${id}`);
+      notify("ok", tr.msgHistOpened(id));
     } catch (e) {
-      notify("error", `No se pudo abrir: ${e.message || "error"}.`);
+      notify("error", tr.msgHistOpenFail(e.message));
     }
-  }, [notify]);
+  }, [notify, tr]);
 
   const deleteFromHistory = useCallback(async (id) => {
     await histDelete(id).catch(() => {});
     refreshHist();
-    notify("info", "Archivo quitado del historial.");
-  }, [refreshHist, notify]);
+    notify("info", tr.msgHistRemoved);
+  }, [refreshHist, notify, tr]);
 
   const persistKB = useCallback(async (newKb) => {
     kbRef.current = newKb; setKb(newKb);
@@ -778,8 +784,8 @@ export default function AutoCotizador() {
     const now = Date.now();
     try { localStorage.setItem(backupTsKey(), String(now)); } catch {}
     setKbBackupTs(now);
-    notify("ok", `Memoria exportada (${kbRef.current.length} respuestas).`);
-  }, [notify]);
+    notify("ok", tr.msgKBExported(kbRef.current.length));
+  }, [notify, tr]);
 
   const importKB = useCallback(async (file) => {
     if (!file) return;
@@ -788,18 +794,18 @@ export default function AutoCotizador() {
       const data = JSON.parse(text);
       const incoming = Array.isArray(data) ? data : data.kb;
       if (!Array.isArray(incoming) || !incoming.every(k => k && k.cobertura && "respuesta" in k)) {
-        throw new Error("estructura inválida");
+        throw new Error(tr.errBadStructure);
       }
       // Une con la actual (prioriza lo importado).
       const map = new Map(kbRef.current.map(k => [normalize(k.cobertura), k]));
       incoming.forEach(k => map.set(normalize(k.cobertura), { count: 1, ...k }));
       const merged = [...map.values()];
       persistKB(merged);
-      notify("ok", `Memoria importada: ${incoming.length} respuestas (total ${merged.length}).`);
+      notify("ok", tr.msgKBImported(incoming.length, merged.length));
     } catch (e) {
-      notify("error", `No se pudo importar: ${e.message || "archivo JSON inválido"}.`);
+      notify("error", tr.msgKBImportError(e.message));
     }
-  }, [persistKB, notify]);
+  }, [persistKB, notify, tr]);
 
   // Respaldo completo en un clic: memoria + historial (respuestas) en un JSON.
   // No incluye los bytes del Excel original (pesados); sí toda la memoria y el
@@ -817,17 +823,17 @@ export default function AutoCotizador() {
       const now = Date.now();
       try { localStorage.setItem(backupTsKey(), String(now)); } catch {}
       setKbBackupTs(now);
-      notify("ok", `Respaldo creado: ${kbRef.current.length} respuestas y ${history.length} archivo(s).`);
+      notify("ok", tr.msgBackupDone(kbRef.current.length, history.length));
     } catch (e) {
-      notify("error", `No se pudo crear el respaldo: ${e.message || "error"}.`);
+      notify("error", tr.msgBackupError(e.message));
     }
-  }, [notify]);
+  }, [notify, tr]);
 
   const restoreAll = useCallback(async (file) => {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      if (!data || !Array.isArray(data.kb)) throw new Error("estructura inválida");
+      if (!data || !Array.isArray(data.kb)) throw new Error(tr.errBadStructure);
       const map = new Map(kbRef.current.map(k => [normalize(k.cobertura), k]));
       data.kb.forEach(k => { if (k && k.cobertura) map.set(normalize(k.cobertura), { count: 1, ...k }); });
       persistKB([...map.values()]);
@@ -839,13 +845,13 @@ export default function AutoCotizador() {
         }
       }
       refreshHist();
-      notify("ok", `Respaldo restaurado: memoria y ${nFiles} archivo(s).`);
+      notify("ok", tr.msgRestoreDone(nFiles));
     } catch (e) {
-      notify("error", `No se pudo restaurar: ${e.message || "archivo inválido"}.`);
+      notify("error", tr.msgRestoreError(e.message));
     } finally {
       if (backupFileRef.current) backupFileRef.current.value = "";
     }
-  }, [notify, persistKB, refreshHist]);
+  }, [notify, persistKB, refreshHist, tr]);
 
   // ── Gestión de memoria (editar/borrar) ───────────────────────────────────
   const updateKBEntry = useCallback((cobertura, respuesta) => {
@@ -877,12 +883,12 @@ export default function AutoCotizador() {
         // Auto-aprende si es confiable (igual que el llenado por lotes).
         const conf = (r.confianza || "media").toLowerCase();
         if (conf !== "baja" && !/^\s*revisar\s*$/i.test(r.respuesta)) learn(c.texto, r.respuesta);
-        notify("ok", "Cobertura resuelta con IA.");
+        notify("ok", tr.msgAISingleOk);
       } else {
-        notify("info", "La IA no devolvió respuesta para esta cobertura.");
+        notify("info", tr.msgAISingleNone);
       }
     } catch (e) {
-      notify("error", `IA: ${e.message}`);
+      notify("error", tr.msgAIError(e.message));
     } finally {
       setRowLoading(null);
     }
@@ -891,11 +897,11 @@ export default function AutoCotizador() {
   const handleFile = useCallback(async (file) => {
     if (!file) return;
     if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
-      notify("error", "Formato no soportado. Sube un archivo .xlsx, .xls o .xlsm.");
+      notify("error", tr.msgBadFormat);
       return;
     }
     if (file.size > 25 * 1024 * 1024) {
-      notify("error", "El archivo supera los 25 MB. Reduce su tamaño e inténtalo de nuevo.");
+      notify("error", tr.msgTooBig);
       return;
     }
     setParsing(true);
@@ -903,7 +909,7 @@ export default function AutoCotizador() {
       const XLSX = await getXLSX();
       const buf = await file.arrayBuffer();
       const workbook = XLSX.read(buf, { type: "array", cellStyles: true, cellNF: true });
-      if (!workbook.SheetNames?.length) throw new Error("El archivo no contiene hojas.");
+      if (!workbook.SheetNames?.length) throw new Error(tr.msgNoSheetsInFile);
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
       // Guardar el archivo original para poder exportar aunque se recargue la página.
       sessionBytesRef.current = buf.slice(0);
@@ -917,17 +923,17 @@ export default function AutoCotizador() {
       setStep("review");
       const nHojas = Object.keys(extracted).length;
       if (nHojas === 0) {
-        notify("info", "No se detectaron hojas de coberturas. Revisa que el archivo tenga hojas tipo Multirriesgo, Deducibles, etc.");
+        notify("info", tr.msgNoSheets);
       } else {
-        notify("ok", `Archivo cargado: ${nHojas} hoja(s) de coberturas detectada(s).`);
+        notify("ok", tr.msgFileLoaded(nHojas));
       }
     } catch (e) {
       console.error(e);
-      notify("error", `No se pudo leer el archivo: ${e.message || "archivo dañado o ilegible."}`);
+      notify("error", tr.msgFileError(e.message));
     } finally {
       setParsing(false);
     }
-  }, [notify]);
+  }, [notify, tr]);
 
   // Modo demo: genera un Excel de ejemplo en memoria y lo carga por el flujo
   // normal, para presentar la app sin usar un archivo real de un cliente.
@@ -967,21 +973,21 @@ export default function AutoCotizador() {
       setSearch(""); setFilter("todas");
       setActive(Object.keys(extracted)[0] || null);
       setStep("review");
-      notify("ok", "Modo demo: archivo de ejemplo cargado. Prueba todo sin un archivo real.");
+      notify("ok", tr.msgDemoLoaded);
     } catch (e) {
       console.error(e);
-      notify("error", `No se pudo cargar el demo: ${e.message || "error"}.`);
+      notify("error", tr.msgDemoError(e.message));
     } finally {
       setParsing(false);
     }
-  }, [notify]);
+  }, [notify, tr]);
 
   const processAI = async () => {
     const names = Object.keys(sheets);
     const sheetsConPend = names.filter(n =>
       sheets[n].coverages.some(c => c.tipo === "Pendiente" && !c.editado));
     if (sheetsConPend.length === 0) {
-      notify("info", "No hay pendientes que resolver. ¡Todo está respondido!");
+      notify("info", tr.msgNoPending);
       return;
     }
 
@@ -1011,7 +1017,7 @@ export default function AutoCotizador() {
     let done = 0;
     let nextIdx = 0;
     let stop = false;
-    setProgressText(`0 de ${totalPend} coberturas`);
+    setProgressText(tr.progressCoverages(0, totalPend));
 
     const worker = async () => {
       while (!stop) {
@@ -1045,7 +1051,7 @@ export default function AutoCotizador() {
         } finally {
           done++;
           setProgress(Math.round((done / total) * 100));
-          setProgressText(`${resueltas} de ${totalPend} coberturas`);
+          setProgressText(tr.progressCoverages(resueltas, totalPend));
         }
       }
     };
@@ -1062,14 +1068,14 @@ export default function AutoCotizador() {
     setProcessing(false);
 
     if (rateLimited) {
-      notify("error", `Groq limitó por uso (429). Se resolvieron ${resueltas}; espera 1-2 min y dale de nuevo para continuar con el resto.`, 9000);
+      notify("error", tr.msgRateLimited(resueltas), 9000);
     } else if (fallidas > 0 && resueltas === 0) {
-      notify("error", `La IA no pudo responder: ${firstError || "error de conexión"}.`, 8000);
+      notify("error", tr.msgAINone(firstError), 8000);
     } else if (fallidas > 0) {
-      notify("info", `IA: ${resueltas} resueltas, ${fallidas} sin respuesta (${firstError}).`, 7000);
+      notify("info", tr.msgAIPartial(resueltas, fallidas, firstError), 7000);
     } else {
       const apr = learned.length;
-      notify("ok", `IA completó ${resueltas} cobertura(s).${apr ? ` ${apr} quedaron aprendidas en memoria para la próxima.` : ""}`);
+      notify("ok", tr.msgAIDone(resueltas, apr));
     }
   };
 
@@ -1110,13 +1116,13 @@ export default function AutoCotizador() {
       } catch { /* no se pudo recuperar */ }
     }
     if (!workbook) {
-      notify("error", "No hay archivo cargado. Vuelve a subir el Excel del broker.");
+      notify("error", tr.msgNoFile);
       return;
     }
     const totalResp = Object.values(sheets)
       .flatMap(s => s.coverages).filter(c => c.respuesta).length;
     if (totalResp === 0) {
-      notify("info", "Aún no hay respuestas que exportar.");
+      notify("info", tr.msgNothingToExport);
       return;
     }
     try {
@@ -1148,24 +1154,24 @@ export default function AutoCotizador() {
     const stPct = stTotal ? Math.round((allCov.filter(c => c.respuesta).length / stTotal) * 100) : 0;
 
     const summary = [
-      ["AUTO-COTIZADOR · REPORTE DE COTIZACIÓN"],
-      [`Archivo: ${fileName || "(sin nombre)"}`],
-      [`Generado: ${new Date().toLocaleString()}`],
+      [tr.rpTitle],
+      [tr.rpFile(fileName)],
+      [tr.rpGenerated(new Date().toLocaleString())],
       [],
-      ["RESUMEN EJECUTIVO", ""],
-      ["Total de ítems", stTotal],
-      ["Respondidas automáticamente", stAuto],
-      ["   · de ellas, por IA", stIA],
-      ["Pendientes", stPend],
-      ["Por revisar", stRev],
-      ["Completado", `${stPct}%`],
-      ["Ahorro de tiempo estimado", stSaved],
+      [tr.rpExecutive, ""],
+      [tr.rpTotal, stTotal],
+      [tr.rpAuto, stAuto],
+      [tr.rpByAI, stIA],
+      [tr.rpPending, stPend],
+      [tr.rpReview, stRev],
+      [tr.rpComplete, `${stPct}%`],
+      [tr.rpTimeSaved, stSaved],
       [],
-      ["DETALLE DE RESPUESTAS"],
-      ["HOJA", "COBERTURA / ÍTEM", "NUESTRA RESPUESTA", "ORIGEN", "¿REVISAR?"],
+      [tr.rpDetail],
+      [tr.rpColSheet, tr.rpColCoverage, tr.rpColAnswer, tr.rpColOrigin, tr.rpColReview],
     ];
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
-      coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || "(vacío)", c.tipo, needsReview(c) ? "⚠ REVISAR" : ""]));
+      coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || tr.rpEmpty, tr.tipoLabel[c.tipo] || c.tipo, needsReview(c) ? tr.rpReviewMark : ""]));
     });
     const wsS = XLSX.utils.aoa_to_sheet(summary);
     wsS["!cols"] = [{ wch: 24 }, { wch: 65 }, { wch: 65 }, { wch: 12 }, { wch: 12 }];
@@ -1174,13 +1180,17 @@ export default function AutoCotizador() {
       { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
       { s: { r: 13, c: 0 }, e: { r: 13, c: 4 } },
     ];
-    const SUMMARY_NAME = "✓ Respuestas";
+    const SUMMARY_NAME = lang === "en" ? "✓ Answers" : "✓ Respuestas";
     // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
     // si solo se borra de Sheets, book_append_sheet lanza "already exists".
-    if (workbook.SheetNames.includes(SUMMARY_NAME)) {
-      workbook.SheetNames = workbook.SheetNames.filter(n => n !== SUMMARY_NAME);
-      delete workbook.Sheets[SUMMARY_NAME];
-    }
+    // Considera los nombres en ambos idiomas por si se cambió el idioma entre
+    // exportaciones, para no dejar dos hojas resumen.
+    ["✓ Respuestas", "✓ Answers"].forEach(prev => {
+      if (workbook.SheetNames.includes(prev)) {
+        workbook.SheetNames = workbook.SheetNames.filter(n => n !== prev);
+        delete workbook.Sheets[prev];
+      }
+    });
     XLSX.utils.book_append_sheet(workbook, wsS, SUMMARY_NAME);
 
     // 3) descargar — Blob + ancla en vez de XLSX.writeFile: es el método más
@@ -1193,16 +1203,16 @@ export default function AutoCotizador() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}_RESPONDIDO.xlsx`;
+    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}${tr.rpSuffix}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    notify("ok", "Archivo exportado con las respuestas.");
+    notify("ok", tr.msgExported);
     saveToHistory(); // queda en el historial como archivo completado
     } catch (e) {
       console.error(e);
-      notify("error", `No se pudo exportar: ${e.message || "error desconocido"}.`);
+      notify("error", tr.msgExportError(e.message));
     }
   };
 
@@ -1227,28 +1237,33 @@ export default function AutoCotizador() {
         <div style={sx.logo}>C</div>
         <div>
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</div>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>Cotizador inteligente</div>
+          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>{tr.appSubtitle}</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={() => setShowPriv(true)} title="Cómo se manejan los datos"
-            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>DATOS</div>
-            <div style={{ fontSize: 13, color: C.green }}>🔒 Privacidad</div>
+          <button onClick={toggleLang} title={tr.switchTo}
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>🌐</div>
+            <div style={{ fontSize: 13, color: C.gold, fontWeight: 700 }}>{lang === "es" ? "EN" : "ES"}</div>
           </button>
-          <button onClick={() => { refreshHist(); setShowHist(true); }} title="Archivos anteriores"
+          <button onClick={() => setShowPriv(true)} title={tr.hdrPrivacyTitle}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>HISTORIAL</div>
-            <div style={{ fontSize: 13, color: C.accentLight }}>📁 {histItems.length} archivo(s)</div>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{tr.hdrData}</div>
+            <div style={{ fontSize: 13, color: C.green }}>{tr.hdrPrivacy}</div>
+          </button>
+          <button onClick={() => { refreshHist(); setShowHist(true); }} title={tr.hdrHistoryTitle}
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{tr.hdrHistory}</div>
+            <div style={{ fontSize: 13, color: C.accentLight }}>📁 {tr.filesN(histItems.length)}</div>
           </button>
           <button onClick={() => setShowKB(true)}
-            title={isCompany ? `Memoria compartida de ${organization?.name || "tu empresa"}` : "Gestionar tu memoria"}
+            title={isCompany ? tr.memTitleTeam(organization?.name) : tr.memTitlePersonal}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{isCompany ? "MEMORIA · EQUIPO" : "MEMORIA"}</div>
-            <div style={{ fontSize: 13, color: C.green }}>{isCompany ? "👥" : "🧠"} {kb.length} respuestas</div>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{isCompany ? tr.hdrMemoryTeam : tr.hdrMemory}</div>
+            <div style={{ fontSize: 13, color: C.green }}>{isCompany ? "👥" : "🧠"} {tr.answersN(kb.length)}</div>
           </button>
           {fileName && step === "review" && (
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>ARCHIVO</div>
+              <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{tr.hdrFile}</div>
               <div style={{ fontSize: 12, color: C.accentLight, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName}</div>
             </div>
           )}
@@ -1283,32 +1298,28 @@ export default function AutoCotizador() {
           <div onClick={e => e.stopPropagation()}
             style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 640, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>🔒 Privacidad y manejo de datos</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>{tr.privTitle}</span>
               <button onClick={() => setShowPriv(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
             </div>
             <div style={{ padding: "16px 18px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.7, color: C.text }}>
               <div style={{ marginBottom: 14 }}>
-                <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>✅ Dónde se guardan tus datos</div>
-                {isCompany ? (
-                  <>La memoria de respuestas y el historial son <b>compartidos por tu empresa ({organization?.name || "tu agencia"})</b>: lo que aprende un compañero, lo aprovecha todo el equipo. Hoy se guardan <b>en este navegador/dispositivo</b>; no se suben a ningún servidor nuestro.</>
-                ) : (
-                  <>Tu memoria de respuestas y el historial de archivos se guardan <b>solo en este navegador/dispositivo</b>. No se suben a ningún servidor nuestro.</>
-                )}
+                <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>{tr.privWhereTitle}</div>
+                {isCompany ? tr.privWhereTeam(organization?.name) : tr.privWherePersonal}
               </div>
               <div style={{ marginBottom: 14 }}>
-                <div style={{ color: C.accentLight, fontWeight: 700, marginBottom: 4 }}>🤖 Qué se envía a la IA</div>
-                Solo para las coberturas <b>pendientes</b> se envía el <b>texto de la cobertura</b> y algunos ejemplos de respuestas previas, a través de un proveedor de IA (Groq). Esto se usa únicamente para generar la respuesta sugerida.
+                <div style={{ color: C.accentLight, fontWeight: 700, marginBottom: 4 }}>{tr.privAITitle}</div>
+                {tr.privAIBody}
               </div>
               <div style={{ marginBottom: 14 }}>
-                <div style={{ color: C.gold, fontWeight: 700, marginBottom: 4 }}>🚫 Qué NO se envía</div>
-                No se envían nombres de clientes, números de póliza, valores asegurados ni datos personales: solo la descripción de la cobertura. El archivo Excel completo nunca sale de tu equipo.
+                <div style={{ color: C.gold, fontWeight: 700, marginBottom: 4 }}>{tr.privNoTitle}</div>
+                {tr.privNoBody}
               </div>
               <div style={{ marginBottom: 14 }}>
-                <div style={{ color: C.text, fontWeight: 700, marginBottom: 4 }}>🔑 Claves y seguridad</div>
-                La clave de la IA vive en el servidor, nunca en el navegador. La conexión con la IA es cifrada (HTTPS).
+                <div style={{ color: C.text, fontWeight: 700, marginBottom: 4 }}>{tr.privKeyTitle}</div>
+                {tr.privKeyBody}
               </div>
               <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, fontSize: 11.5, color: C.muted }}>
-                <b style={{ color: C.yellow }}>Para uso empresarial:</b> si la aseguradora requiere que ningún dato salga de su red, existe la opción de usar una IA privada/local. Consúltalo antes de procesar información altamente confidencial.
+                <b style={{ color: C.yellow }}>{tr.privEnterprise}</b>{tr.privEnterpriseBody}
               </div>
             </div>
           </div>
@@ -1321,20 +1332,20 @@ export default function AutoCotizador() {
           <div onClick={e => e.stopPropagation()}
             style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 720, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.accentLight }}>📁 Historial · {histItems.length} archivo(s)</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.accentLight }}>{tr.histTitle(histItems.length)}</span>
               <button onClick={() => setShowHist(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
             </div>
             {histItems.length > 0 && (
               <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}` }}>
-                <input value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="🔎 Buscar archivo por nombre..."
+                <input value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder={tr.histSearch}
                   style={{ width: "100%", background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
               </div>
             )}
             <div style={{ padding: "10px 14px", overflowY: "auto" }}>
               {histItems.length === 0 && (
                 <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 28, lineHeight: 1.6 }}>
-                  Aún no hay archivos guardados.<br />
-                  Cuando exportes un archivo o cambies a otro, quedará aquí para reabrirlo.
+                  {tr.histEmpty1}<br />
+                  {tr.histEmpty2}
                 </div>
               )}
               {histItems.filter(h => normalize(h.fileName || "").includes(normalize(histSearch))).map(h => {
@@ -1346,12 +1357,12 @@ export default function AutoCotizador() {
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 13, color: C.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📄 {h.fileName}</div>
                         <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
-                          {fecha} · {h.answered}/{h.total} respondidas ({pctH}%)
+                          {fecha} · {tr.histAnswered(h.answered, h.total, pctH)}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => openFromHistory(h.id)} style={{ ...sx.btn, padding: "7px 12px" }}>Abrir</button>
-                        <button onClick={() => { if (confirm(`¿Quitar "${h.fileName}" del historial?`)) deleteFromHistory(h.id); }}
+                        <button onClick={() => openFromHistory(h.id)} style={{ ...sx.btn, padding: "7px 12px" }}>{tr.histOpen}</button>
+                        <button onClick={() => { if (confirm(tr.histRemoveConfirm(h.fileName))) deleteFromHistory(h.id); }}
                           style={{ ...sx.btnSm, color: C.red, borderColor: C.border }}>🗑</button>
                       </div>
                     </div>
@@ -1360,17 +1371,17 @@ export default function AutoCotizador() {
               })}
               {histItems.length > 0 && histItems.filter(h => normalize(h.fileName || "").includes(normalize(histSearch))).length === 0 && (
                 <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 20 }}>
-                  No hay archivos que coincidan con "{histSearch}".
+                  {tr.histNoMatch(histSearch)}
                 </div>
               )}
             </div>
             <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button style={sx.btnSm} onClick={backupAll}>💾 Respaldar todo</button>
-              <button style={sx.btnSm} onClick={() => backupFileRef.current?.click()}>♻️ Restaurar</button>
+              <button style={sx.btnSm} onClick={backupAll}>{tr.histBackupAll}</button>
+              <button style={sx.btnSm} onClick={() => backupFileRef.current?.click()}>{tr.histRestore}</button>
               <input ref={backupFileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
                 onChange={e => restoreAll(e.target.files[0])} />
               <span style={{ fontSize: 10.5, color: C.muted, flex: 1, minWidth: 160, lineHeight: 1.5 }}>
-                Guarda memoria + historial en un archivo. Útil para cambiar de equipo o no perder el trabajo.
+                {tr.histBackupHint}
               </span>
             </div>
           </div>
@@ -1383,23 +1394,23 @@ export default function AutoCotizador() {
           <div onClick={e => e.stopPropagation()}
             style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 760, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>🧠 Memoria · {kb.length} respuestas</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>{tr.kbTitle(kb.length)}</span>
               <button onClick={() => setShowKB(false)} style={{ ...sx.btnSm, fontSize: 14 }}>✕</button>
             </div>
             <div style={{ padding: "12px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input value={kbSearch} onChange={e => setKbSearch(e.target.value)} placeholder="🔎 Buscar en la memoria..."
+              <input value={kbSearch} onChange={e => setKbSearch(e.target.value)} placeholder={tr.kbSearch}
                 style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
-              <button style={sx.btnSm} onClick={exportKB}>⬇️ Exportar</button>
-              <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>⬆️ Importar</button>
+              <button style={sx.btnSm} onClick={exportKB}>{tr.kbExport}</button>
+              <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>{tr.kbImport}</button>
               <span style={{ fontSize: 10.5, color: kbBackupTs ? C.muted : C.yellow }}>
-                {kbBackupTs ? `Último respaldo: ${new Date(kbBackupTs).toLocaleDateString()}` : "⚠ Sin respaldo aún"}
+                {kbBackupTs ? tr.kbLastBackup(new Date(kbBackupTs).toLocaleDateString()) : tr.kbNoBackup}
               </span>
               <button style={{ ...sx.btnSm, color: C.yellow, borderColor: "#4A3000" }}
                 onClick={() => {
-                  if (window.confirm("¿Restaurar la memoria base? Se perderán las respuestas aprendidas que no estén en la semilla.")) {
-                    persistKB(SEED_KB); notify("ok", "Memoria restaurada a la base.");
+                  if (window.confirm(tr.kbBaseConfirm)) {
+                    persistKB(SEED_KB); notify("ok", tr.msgKBToBase);
                   }
-                }}>↺ Base</button>
+                }}>{tr.kbBase}</button>
               <input ref={kbFileRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={e => { importKB(e.target.files[0]); e.target.value = ""; }} />
             </div>
@@ -1407,7 +1418,7 @@ export default function AutoCotizador() {
               {(() => {
                 const nQ = normalize(kbSearch);
                 const list = kb.filter(k => !nQ || normalize(k.cobertura).includes(nQ) || normalize(k.respuesta).includes(nQ));
-                if (list.length === 0) return <div style={{ color: C.muted, fontSize: 12, padding: 24, textAlign: "center" }}>Sin coincidencias.</div>;
+                if (list.length === 0) return <div style={{ color: C.muted, fontSize: 12, padding: 24, textAlign: "center" }}>{tr.kbNoMatch}</div>;
                 return list.map(k => (
                   <div key={normalize(k.cobertura)} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
                     <div style={{ flex: 1 }}>
@@ -1415,7 +1426,7 @@ export default function AutoCotizador() {
                       <input defaultValue={k.respuesta} onBlur={e => { if (e.target.value !== k.respuesta) updateKBEntry(k.cobertura, e.target.value); }}
                         style={{ width: "100%", background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 9px", fontSize: 12, fontFamily: F, outline: "none" }} />
                     </div>
-                    <button onClick={() => deleteKBEntry(k.cobertura)} title="Borrar de la memoria"
+                    <button onClick={() => deleteKBEntry(k.cobertura)} title={tr.kbDeleteTitle}
                       style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A", marginTop: 20 }}>🗑</button>
                   </div>
                 ));
@@ -1434,21 +1445,20 @@ export default function AutoCotizador() {
               <div className="fade-up" style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 760, margin: "0 auto", padding: narrow ? "10px 0 4px" : "32px 0 4px" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 10.5, border: `1px solid ${C.border}`, background: "rgba(19,25,41,.7)", borderRadius: 999, padding: "6px 15px", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 20 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} className="live-dot" />
-                  <span className="shine-text" style={{ fontWeight: 700 }}>🦅 Cotizador inteligente de coberturas</span>
+                  <span className="shine-text" style={{ fontWeight: 700 }}>{tr.heroBadge}</span>
                 </div>
                 <h1 style={{ fontSize: narrow ? 30 : 48, fontWeight: 700, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: -1 }}>
-                  Cotiza en minutos,<br />
-                  <span style={{ background: `linear-gradient(90deg,${C.accentLight},${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>no en horas</span>
+                  {tr.heroTitle1}<br />
+                  <span style={{ background: `linear-gradient(90deg,${C.accentLight},${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>{tr.heroTitle2}</span>
                 </h1>
                 <p style={{ color: "#9FB1CC", fontSize: narrow ? 14 : 16.5, lineHeight: 1.7, margin: "0 auto 24px", maxWidth: 580 }}>
-                  Sube el Excel del broker y la app responde las coberturas al instante con lo que ya aprendió.
-                  Usa IA solo para lo nuevo y te devuelve <strong style={{ color: C.text }}>el mismo archivo</strong>, respondido y listo para reenviar.
+                  {tr.heroSubA}<strong style={{ color: C.text }}>{tr.heroSubB}</strong>{tr.heroSubC}
                 </p>
                 <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
                   {[
-                    ["⚡", "Segundos por cotización"],
-                    ["🧠", `${kb.length} respuestas aprendidas`],
-                    ["📊", "Importa y exporta en Excel"],
+                    ["⚡", tr.chipSeconds],
+                    ["🧠", tr.chipLearned(kb.length)],
+                    ["📊", tr.chipExcel],
                   ].map(([ic, t]) => (
                     <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "#B8C6DD", border: `1px solid ${C.border}`, background: "rgba(14,24,40,.6)", borderRadius: 999, padding: "6px 13px" }}>
                       <span>{ic}</span>{t}
@@ -1468,36 +1478,36 @@ export default function AutoCotizador() {
                 onClick={() => fileRef.current?.click()}
               >
                 <div className={parsing ? "" : "float"} style={{ fontSize: 40, marginBottom: 10 }}>{parsing ? "⏳" : "📂"}</div>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Arrastra el archivo del broker aquí</div>
-                <div style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>.xlsx · .xls · .xlsm · o haz clic para elegir</div>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{tr.dropTitle}</div>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>{tr.dropHint}</div>
                 <button style={{ ...sx.btnGold, opacity: !kbReady || parsing ? 0.6 : 1 }} disabled={!kbReady || parsing}>
-                  {parsing ? "Leyendo archivo..." : kbReady ? "Seleccionar archivo" : "Cargando memoria..."}
+                  {parsing ? tr.dropReading : kbReady ? tr.dropSelect : tr.dropLoadingKB}
                 </button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
               </div>
               <div style={{ textAlign: "center", marginTop: 12 }}>
                 <button onClick={loadDemo}
                   style={{ ...sx.btn, background: "transparent", border: `1px solid ${C.gold}`, color: C.gold, padding: "10px 22px" }}>
-                  ▶️ Probar con datos de ejemplo
+                  {tr.demoBtn}
                 </button>
               </div>
               <div style={{ display: "flex", justifyContent: "center", gap: narrow ? 12 : 22, flexWrap: "wrap", marginTop: 16, fontSize: 11, color: C.muted }}>
-                <span>🔒 API key protegida en el servidor</span>
-                <span>🧠 {kb.length} respuestas en memoria</span>
-                <span>📄 Exporta el mismo Excel</span>
+                <span>{tr.trustKey}</span>
+                <span>{tr.trustMem(kb.length)}</span>
+                <span>{tr.trustExcel}</span>
               </div>
             </div>
 
             {/* Compatible con Excel */}
             <div className="fade-up delay-1 grad-border" style={{ maxWidth: 720, margin: "20px auto 0", padding: narrow ? "18px 16px" : "22px 26px" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: narrow ? 13 : 14, fontWeight: 700, marginBottom: 14 }}>
-                <span style={{ fontSize: 18 }}>📊</span> 100% compatible con Excel
+                <span style={{ fontSize: 18 }}>📊</span> {tr.compatTitle}
               </div>
               <div style={{ display: "flex", alignItems: "stretch", justifyContent: "center", gap: narrow ? 8 : 12, flexWrap: narrow ? "wrap" : "nowrap" }}>
                 {[
-                  ["⬆️", "Importa", ".xlsx · .xls · .xlsm del broker"],
-                  ["🤖", "Responde", "memoria + IA para lo nuevo"],
-                  ["⬇️", "Exporta", "el mismo Excel + hoja resumen"],
+                  ["⬆️", ...tr.compatImport],
+                  ["🤖", ...tr.compatRespond],
+                  ["⬇️", ...tr.compatExport],
                 ].map(([ic, t, d], i) => (
                   <Fragment key={t}>
                     <div style={{ flex: 1, minWidth: narrow ? 88 : 0, textAlign: "center", background: "rgba(14,24,40,.55)", border: `1px solid ${C.border}`, borderRadius: 10, padding: narrow ? "10px 8px" : "12px 10px" }}>
@@ -1515,9 +1525,9 @@ export default function AutoCotizador() {
             <div className="fade-up delay-2 grad-border" style={{ maxWidth: 1000, margin: "44px auto 0", padding: narrow ? "20px 16px" : "26px 32px" }}>
               <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "repeat(3,1fr)", gap: narrow ? 18 : 14, textAlign: "center" }}>
                 {[
-                  [`${kb.length}`, "respuestas en memoria", C.green],
-                  ["Minutos", "en vez de horas por cotización", C.accentLight],
-                  ["100%", "tu mismo archivo, sin reescribir nada", C.gold],
+                  [`${kb.length}`, tr.metricMem, C.green],
+                  [tr.metricMinutes[0], tr.metricMinutes[1], C.accentLight],
+                  [tr.metricFile[0], tr.metricFile[1], C.gold],
                 ].map(([big, small, col], i) => (
                   <div key={i} style={{ borderLeft: !narrow && i > 0 ? `1px solid ${C.border}` : "none", padding: narrow ? 0 : "0 8px" }}>
                     <div style={{ fontSize: narrow ? 30 : 36, fontWeight: 700, color: col, lineHeight: 1, marginBottom: 8, letterSpacing: -1 }}>{big}</div>
@@ -1529,15 +1539,10 @@ export default function AutoCotizador() {
 
             {/* Cómo funciona */}
             <div className="fade-up delay-2" style={{ maxWidth: 1000, margin: "48px auto 0" }}>
-              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>Cómo funciona</div>
-              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>De Excel del broker a cotización lista en 4 pasos</div>
+              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>{tr.howKicker}</div>
+              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>{tr.howTitle}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
-                {[
-                  ["1", "Sube el archivo", "Arrastra el Excel del broker (.xlsx, .xls, .xlsm)."],
-                  ["2", "Auto-llenado", "Las coberturas conocidas se responden solas al instante."],
-                  ["3", "IA para lo nuevo", "Un clic resuelve los pendientes que no tienen precedente."],
-                  ["4", "Exporta", "Descarga el mismo archivo respondido + hoja resumen."],
-                ].map(([n, t, d]) => (
+                {tr.steps.map(([n, t, d]) => (
                   <div key={n} className="lift" style={sx.card}>
                     <div style={{ width: 32, height: 32, borderRadius: 9, background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, marginBottom: 12, boxShadow: "0 4px 14px rgba(26,111,216,.4)" }}>{n}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
@@ -1549,19 +1554,14 @@ export default function AutoCotizador() {
 
             {/* Beneficios */}
             <div className="fade-up delay-3" style={{ maxWidth: 1000, margin: "48px auto 0" }}>
-              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>Por qué te conviene</div>
-              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>Hecho para suscribir más rápido, sin perder criterio</div>
+              <div style={{ textAlign: "center", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: C.gold, marginBottom: 8, fontWeight: 600 }}>{tr.whyKicker}</div>
+              <div style={{ textAlign: "center", fontSize: narrow ? 18 : 22, fontWeight: 700, marginBottom: 24, letterSpacing: -0.5 }}>{tr.whyTitle}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
-                {[
-                  ["🧠", "Aprende contigo", `Ya tiene ${kb.length} respuestas. Cada cobertura que corriges se guarda para la próxima vez.`],
-                  ["⚡", "Match instantáneo", "Las coberturas conocidas se llenan solas, sin esperar a la IA ni gastar llamadas."],
-                  ["📄", "Llena tu archivo", "Te devuelve el mismo Excel del broker con las respuestas puestas, listo para reenviar."],
-                  ["🔒", "Seguro por diseño", "La API key vive en el servidor, nunca en el navegador, y tus datos no salen del flujo."],
-                ].map(([ic, t, d], i) => (
+                {tr.benefits.map(([ic, t, d], i) => (
                   <div key={i} className="lift" style={sx.card}>
                     <div style={{ fontSize: 24, marginBottom: 8 }}>{ic}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5 }}>{t}</div>
-                    <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d}</div>
+                    <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{d(kb.length)}</div>
                   </div>
                 ))}
               </div>
@@ -1570,24 +1570,16 @@ export default function AutoCotizador() {
             {/* Antes / Después */}
             <div className="fade-up delay-3" style={{ maxWidth: 1000, margin: "48px auto 0", display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 1fr", gap: 14 }}>
               <div style={{ ...sx.card, padding: 22, background: "#160F0F", border: "1px solid #3A2020" }}>
-                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.red, marginBottom: 14, fontWeight: 700 }}>😵 Sin la app</div>
-                {[
-                  "Copiar y pegar coberturas a mano, una por una",
-                  "Buscar en cotizaciones viejas qué se respondió antes",
-                  "Horas por archivo y riesgo de errores de tipeo",
-                ].map((t, i) => (
+                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.red, marginBottom: 14, fontWeight: 700 }}>{tr.beforeTitle}</div>
+                {tr.beforeItems.map((t, i) => (
                   <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5, color: "#C9A8A8", lineHeight: 1.55, marginBottom: i < 2 ? 10 : 0 }}>
                     <span style={{ color: C.red }}>✕</span>{t}
                   </div>
                 ))}
               </div>
               <div style={{ ...sx.card, padding: 22, background: "#0C1A12", border: "1px solid #1C3A28" }}>
-                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.green, marginBottom: 14, fontWeight: 700 }}>⚡ Con Auto-Cotizador</div>
-                {[
-                  "Subes el Excel y las coberturas conocidas se llenan solas",
-                  "La memoria recuerda lo que respondiste y mejora con el uso",
-                  "Minutos por archivo y el mismo formato listo para reenviar",
-                ].map((t, i) => (
+                <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.green, marginBottom: 14, fontWeight: 700 }}>{tr.afterTitle}</div>
+                {tr.afterItems.map((t, i) => (
                   <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5, color: "#A8E6BC", lineHeight: 1.55, marginBottom: i < 2 ? 10 : 0 }}>
                     <span style={{ color: C.green }}>✓</span>{t}
                   </div>
@@ -1597,15 +1589,15 @@ export default function AutoCotizador() {
 
             {/* CTA de cierre */}
             <div className="fade-up delay-4 grad-border" style={{ maxWidth: 1000, margin: "48px auto 0", padding: narrow ? "28px 20px" : "40px", textAlign: "center" }}>
-              <h2 style={{ fontSize: narrow ? 20 : 26, fontWeight: 700, margin: "0 0 10px", letterSpacing: -0.5 }}>¿Listo para cotizar tu próximo Excel?</h2>
+              <h2 style={{ fontSize: narrow ? 20 : 26, fontWeight: 700, margin: "0 0 10px", letterSpacing: -0.5 }}>{tr.ctaTitle}</h2>
               <p style={{ color: C.muted, fontSize: narrow ? 13 : 14.5, lineHeight: 1.6, margin: "0 auto 22px", maxWidth: 460 }}>
-                Sube el archivo del broker y deja que la memoria del cotizador haga el trabajo pesado.
+                {tr.ctaBody}
               </p>
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={!kbReady || parsing}
                 style={{ ...sx.btnGold, padding: "14px 30px", fontSize: 14, opacity: !kbReady || parsing ? 0.6 : 1 }}>
-                {parsing ? "Leyendo archivo..." : kbReady ? "📂 Subir archivo ahora" : "Cargando memoria..."}
+                {parsing ? tr.dropReading : kbReady ? tr.ctaBtn : tr.dropLoadingKB}
               </button>
             </div>
 
@@ -1615,7 +1607,7 @@ export default function AutoCotizador() {
                 <span style={{ ...sx.logo, width: 24, height: 24, fontSize: 12, borderRadius: 6 }}>C</span>
                 <span style={{ color: C.text, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</span>
               </div>
-              Auto-Cotizador — herramienta interna de suscripción
+              {tr.footer}
             </div>
           </div>
         )}
@@ -1623,17 +1615,17 @@ export default function AutoCotizador() {
         {step === "review" && (
           <div>
             <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap", alignItems: "stretch" }}>
-              <div style={sx.stat}><div style={sx.statLabel}>HOJAS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.accentLight }}>{Object.keys(sheets).length}</div></div>
-              <div style={sx.stat}><div style={sx.statLabel}>ÍTEMS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.gold }}>{total}</div></div>
-              <div style={sx.stat}><div style={sx.statLabel}>AUTO-LLENADAS</div><div style={{ fontSize: 26, fontWeight: 700, color: C.green }}>{auto}</div></div>
-              <div style={sx.stat}><div style={sx.statLabel}>PENDIENTES</div><div style={{ fontSize: 26, fontWeight: 700, color: pend > 0 ? C.yellow : C.green }}>{pend}</div></div>
-              <div style={sx.stat}><div style={sx.statLabel}>POR REVISAR</div><div style={{ fontSize: 26, fontWeight: 700, color: revisar > 0 ? C.red : C.green }}>{revisar}</div></div>
-              <div style={{ ...sx.stat, background: "#0F2614", border: `1px solid ${C.green}` }} title="Tiempo estimado que te ahorró la app vs. responder a mano">
-                <div style={sx.statLabel}>⏱ AHORRO ESTIMADO</div>
+              <div style={sx.stat}><div style={sx.statLabel}>{tr.stSheets}</div><div style={{ fontSize: 26, fontWeight: 700, color: C.accentLight }}>{Object.keys(sheets).length}</div></div>
+              <div style={sx.stat}><div style={sx.statLabel}>{tr.stItems}</div><div style={{ fontSize: 26, fontWeight: 700, color: C.gold }}>{total}</div></div>
+              <div style={sx.stat}><div style={sx.statLabel}>{tr.stAuto}</div><div style={{ fontSize: 26, fontWeight: 700, color: C.green }}>{auto}</div></div>
+              <div style={sx.stat}><div style={sx.statLabel}>{tr.stPending}</div><div style={{ fontSize: 26, fontWeight: 700, color: pend > 0 ? C.yellow : C.green }}>{pend}</div></div>
+              <div style={sx.stat}><div style={sx.statLabel}>{tr.stReview}</div><div style={{ fontSize: 26, fontWeight: 700, color: revisar > 0 ? C.red : C.green }}>{revisar}</div></div>
+              <div style={{ ...sx.stat, background: "#0F2614", border: `1px solid ${C.green}` }} title={tr.stSavingTitle}>
+                <div style={sx.statLabel}>{tr.stSaving}</div>
                 <div style={{ fontSize: 24, fontWeight: 700, color: C.green }}>{savedLabel}</div>
               </div>
               <div style={{ ...sx.stat, flex: 2, minWidth: 180 }}>
-                <div style={sx.statLabel}>COMPLETADO {answered}/{total}</div>
+                <div style={sx.statLabel}>{tr.stDone(answered, total)}</div>
                 <div style={{ height: 4, borderRadius: 2, background: C.border, overflow: "hidden", marginTop: 10 }}>
                   <div style={{ width: `${pct}%`, height: "100%", background: `linear-gradient(90deg,${C.accent},${C.accentLight})`, transition: "width .5s" }} />
                 </div>
@@ -1643,15 +1635,15 @@ export default function AutoCotizador() {
 
             <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
               <button style={{ ...sx.btnGold, opacity: processing ? 0.6 : 1 }} onClick={processAI} disabled={processing}>
-                {processing ? `Procesando IA... ${progress}%${progressText ? ` (${progressText})` : ""}` : `⚡ Completar pendientes con IA (${pend})`}
+                {processing ? tr.btnProcessing(progress, progressText) : tr.btnCompleteAI(pend)}
               </button>
-              <button style={sx.btn} onClick={exportFile}>⬇️ Exportar archivo respondido</button>
-              <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>Otro archivo</button>
+              <button style={sx.btn} onClick={exportFile}>{tr.btnExport}</button>
+              <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>{tr.btnOther}</button>
             </div>
 
             {processing && (
               <div style={{ background: "#0A1F3A", border: `1px solid ${C.accent}`, borderRadius: 8, padding: "12px 18px", marginBottom: 14, fontSize: 12 }}>
-                🤖 Analizando lo que no está en memoria... {progress}%
+                {tr.processingBox(progress)}
                 {progressText && <span style={{ color: C.muted }}> · {progressText}</span>}
               </div>
             )}
@@ -1696,28 +1688,28 @@ export default function AutoCotizador() {
               <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
                 <div style={{ background: C.surface, padding: "11px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.gold, letterSpacing: 0.8 }}>📄 {active.trim().toUpperCase()}</span>
-                  <span style={{ fontSize: 11, color: C.muted }}>columna de respuesta detectada: col {sheets[active].respCol + 1}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{tr.respColDetected(sheets[active].respCol + 1)}</span>
                 </div>
                 <div style={{ padding: "11px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    placeholder="🔎 Buscar cobertura o respuesta..."
+                    placeholder={tr.reviewSearch}
                     style={{ flex: 1, minWidth: 180, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }}
                   />
-                  {fbtn("todas", "Todas")}
-                  {fbtn("pendientes", "Pendientes")}
-                  {fbtn("respondidas", "Respondidas")}
-                  {fbtn("revisar", "⚠ Revisar")}
-                  <span style={{ fontSize: 11, color: C.muted }}>{rows.length} de {sheets[active].coverages.length}</span>
+                  {fbtn("todas", tr.fAll)}
+                  {fbtn("pendientes", tr.fPending)}
+                  {fbtn("respondidas", tr.fAnswered)}
+                  {fbtn("revisar", tr.fReview)}
+                  <span style={{ fontSize: 11, color: C.muted }}>{tr.rowsOf(rows.length, sheets[active].coverages.length)}</span>
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr>
-                      <th style={{ ...sx.th, width: 36 }}>#</th>
-                      <th style={{ ...sx.th, width: "44%" }}>COBERTURA / ÍTEM DEL BROKER</th>
-                      <th style={sx.th}>NUESTRA RESPUESTA</th>
-                      <th style={{ ...sx.th, width: 90 }}>ORIGEN</th>
+                      <th style={{ ...sx.th, width: 36 }}>{tr.thNum}</th>
+                      <th style={{ ...sx.th, width: "44%" }}>{tr.thCoverage}</th>
+                      <th style={sx.th}>{tr.thAnswer}</th>
+                      <th style={{ ...sx.th, width: 90 }}>{tr.thOrigin}</th>
                     </tr></thead>
                     <tbody>
                       {rows.map(({ c, idx }) => {
@@ -1730,33 +1722,33 @@ export default function AutoCotizador() {
                           <td style={{ ...sx.td, color: C.muted, fontSize: 10 }}>{idx + 1}</td>
                           <td style={{ ...sx.td, color: "#B0C0D8", maxWidth: 380 }}>{c.texto}</td>
                           <td style={sx.td}>
-                            <textarea style={sx.ta} value={c.respuesta} placeholder="— sin respuesta —"
+                            <textarea style={sx.ta} value={c.respuesta} placeholder={tr.noAnswer}
                               onChange={e => editResp(active, idx, e.target.value)}
                               onBlur={() => onBlurLearn(active, idx)}
                               onFocus={e => e.target.style.borderColor = C.accentLight}
                             />
                             <button onClick={() => aiSingle(active, idx)} disabled={rowLoading === `${active}::${idx}`}
                               style={{ ...sx.btnSm, marginTop: 5, opacity: rowLoading === `${active}::${idx}` ? 0.6 : 1, color: C.accentLight, borderColor: C.border }}>
-                              {rowLoading === `${active}::${idx}` ? "⏳ IA..." : "⚡ Responder con IA"}
+                              {rowLoading === `${active}::${idx}` ? tr.aiRowLoading : tr.aiRowBtn}
                             </button>
                           </td>
                           <td style={{ ...sx.td, textAlign: "center" }}>
-                            <span style={badge(c.tipo)}>{c.tipo}</span>
+                            <span style={badge(c.tipo)}>{tr.tipoLabel[c.tipo] || c.tipo}</span>
                             {c.score > 0 && c.score < 1 && c.tipo === "Similar" &&
                               <div style={{ fontSize: 9, color: C.muted, marginTop: 4 }}>{Math.round(c.score * 100)}%</div>}
                             {c.tipo === "IA" && c.confianza &&
                               <div style={{ fontSize: 9, marginTop: 4, color: c.confianza === "alta" ? C.green : c.confianza === "baja" ? C.red : C.yellow }}>
-                                confianza {c.confianza}
+                                {tr.confLabel(c.confianza)}
                               </div>}
                             {review &&
-                              <div style={{ fontSize: 9, marginTop: 4, color: C.red, fontWeight: 700 }}>⚠ revisar</div>}
+                              <div style={{ fontSize: 9, marginTop: 4, color: C.red, fontWeight: 700 }}>{tr.reviewTag}</div>}
                           </td>
                         </tr>
                         );
                       })}
                       {rows.length === 0 && (
                         <tr><td colSpan={4} style={{ ...sx.td, textAlign: "center", color: C.muted, padding: 28 }}>
-                          Sin resultados para este filtro/búsqueda.
+                          {tr.noResults}
                         </td></tr>
                       )}
                     </tbody>
@@ -1768,7 +1760,7 @@ export default function AutoCotizador() {
 
             {Object.keys(sheets).length === 0 && (
               <div style={{ ...sx.card, textAlign: "center", color: C.muted, padding: 40 }}>
-                No detecté hojas de coberturas. Revisa que el archivo tenga hojas como Multirriesgo, Deducibles, Vehículos, etc.
+                {tr.noSheetsDetected}
               </div>
             )}
           </div>

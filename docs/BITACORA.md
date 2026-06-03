@@ -40,11 +40,28 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
   - **Pendiente de configuración:** habilitar **Organizations** en el panel de
     Clerk (Dashboard → Organizations → Enable) para que el selector funcione.
 
+### Interfaz bilingüe ES/EN
+- Toda la interfaz visible está en **español e inglés** (`src/i18n.js` con el
+  objeto `STR = { es, en }`; las cadenas con datos variables son funciones).
+- **Detección automática:** arranca en el idioma del navegador (navegadores en
+  inglés, típicos en USA, abren en inglés); si el usuario eligió un idioma, se
+  recuerda en `localStorage` (`cotizador_lang`).
+- **Botón 🌐 ES/EN** en el encabezado para cambiar en cualquier momento.
+- Cubre landing, encabezado, paneles (privacidad, historial, memoria), pantalla
+  de revisión, tabla, filtros, toasts y el **reporte Excel exportado** (hoja
+  resumen y sufijo del archivo, `_RESPONDIDO` / `_ANSWERED`).
+- Se quitó el texto residual de "suscripción" del pie (ahora "herramienta para
+  equipos de cotización" / "quoting tool for broker teams").
+- **Pendiente:** el prompt del servidor (`api/quote.js`) sigue en español y la
+  base de conocimiento semilla es de seguros de Ecuador; las respuestas que
+  genera son códigos cortos ("Ok", "NO", límites) válidos en ambos idiomas.
+
 ### Próximos pasos de este giro (no hechos aún)
-- Interfaz **bilingüe ES/EN** (detectar idioma del navegador; botón de cambio).
-- **Landing en inglés** orientado a agencias ("your team quotes faster").
+- **Landing en inglés** aún más orientado a agencias de USA (mensaje de venta).
 - **Cobro por empresa:** empezar manual (factura/contrato); luego Stripe con
-  plan por agencia. Quitar el texto residual de "suscripción" del pie.
+  plan por agencia.
+- (Opcional) Adaptar el prompt/IA y una base de conocimiento en inglés para el
+  mercado de USA.
 
 ### Publicación / Vercel
 - Se desactivó la **Deployment Protection** para que la app sea pública.
