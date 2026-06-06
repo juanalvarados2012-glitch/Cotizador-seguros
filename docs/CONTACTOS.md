@@ -60,14 +60,17 @@ resuelve la app.
 ## 2) 🛡️ Hispana de Seguros
 
 **🎯 Campeón (escribir primero): Jose Almeida — Vicepresidente de Operaciones,
-Tecnología e Innovación**
-Perfil ideal para presentar una app tecnológica (validado en la propia ficha de
-contactos). Decide o influye fuerte sobre adoptar herramientas nuevas.
+Tecnología e Innovación — jalmeida@hispanadeseguros.com**
+Perfil ideal para presentar una app tecnológica. Decide o influye fuerte sobre
+adoptar herramientas nuevas.
 
 **Apoyos / decisores:**
-- Juan Carlos Amador B. — CEO / Gerente General *(empresa mediana → CEO accesible; bueno para ir en paralelo)*
-- Maria Teresa Mancero — Gerente de Mercadeo y Comunicaciones *(útil para el caso de éxito / testimonio)*
+- Juan Carlos Amador Bayas — CEO / Gerente General — jamador@hispanadeseguros.com *(empresa mediana → CEO accesible; bueno para ir en paralelo)*
+- Maria Teresa Mancero — Gerente de Mercadeo y Comunicaciones — mmancero@hispanadeseguros.com *(útil para el caso de éxito / testimonio)*
 - Macarena Palacios Castro — Gerente Sucursal Cuenca *(contacto regional)*
+
+> 📧 **Patrón de correo Hispana:** inicial + apellido @hispanadeseguros.com
+> (≈98% de probabilidad). Si rebota, prueba `nombre.apellido@…`.
 
 **Correo general:** servicioalcliente@hispanadeseguros.com
 **Redes:** IG @hispanadesegurosec · LinkedIn (Hispana de Seguros y Reaseguros) · FB · TikTok @hispanadesegurosec
@@ -99,17 +102,23 @@ contactos). Decide o influye fuerte sobre adoptar herramientas nuevas.
 
 ## 3) 🔁 Equisuiza (fusión Equinoccial + Ecuatoriano Suiza)
 
-**🎯 Campeón (escribir primero): Adriana Guerrero — Gerente Comercial Corporativo**
-Perfil clave para alianzas B2B y compra de software. Buen punto de entrada.
-**De respaldo / validador técnico:** **Juan Manuel Loaiza — Director de Procesos
-y PMO** (le interesa la eficiencia operativa y tecnológica → ideal para sponsor
-interno de un piloto).
+**🎯 Campeón (escribir primero): Adriana Guerrero — Gerente Comercial Corporativo
+— aguerrero@equisuiza.com**
+Contacto clave para soluciones que ayuden a la fuerza de ventas y brokers. Buen
+punto de entrada B2B.
+**De respaldo / validador técnico:** **Santiago Pulgar — Head of IT & Security —
+spulgar@equisuiza.com** (validado por ZoomInfo; ideal para validar una app
+tecnológica y la seguridad de datos → sponsor interno del piloto).
 
 **Decisores / apoyos:**
-- Juan Manuel Merchán — CEO / Gerente General *(máximo directivo de la fusión)*
-- Esmeralda Malagon — Vicepresidenta de Negocios y Marketing *(estrategia multicanal)*
+- Juan Manuel Merchán — Presidente Ejecutivo / CEO — jmerchan@equisuiza.com *(lidera la fusión, enfocado en eficiencia e innovación)*
+- Esmeralda Malagon — Vicepresidenta de Negocios y Marketing — emalagon@equisuiza.com *(estrategia multicanal y productos digitales)*
 
-**Correos / teléfono:** info@equisuiza.com · Servicio al Cliente 02-398400 (Quito)
+> 📧 **Patrón de correo Equisuiza:** inicial + apellido @equisuiza.com (o
+> `nombre.apellido@equisuiza.com`). Si rebota, prueba el formato alterno
+> (ej. `juan.merchan@equisuiza.com`).
+
+**Correo general / teléfono:** info@equisuiza.com · Servicio al Cliente 02-398400 (Quito)
 **Redes:** IG @equisuizaseguros · LinkedIn (Equisuiza Seguros) · FB Equisuiza Seguros
 
 > 💡 Gancho específico: la fusión Equinoccial + Ecuatoriano Suiza significa
