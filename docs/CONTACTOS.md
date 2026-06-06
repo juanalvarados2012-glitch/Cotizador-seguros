@@ -33,27 +33,29 @@ resuelve la app.
 > ($199/mes congelado el 1er año a cambio de testimonio).
 
 ### ✉️ Primer correo a Marianela Núñez
-**Asunto:** Responder las plantillas de los brokers en minutos, no en horas
+**Asunto:** Suscripción de ramos generales: responder a los brokers en minutos
 
 > Estimada Marianela:
 >
-> Mi nombre es Juan Alvarado. Desarrollé **Auto-Cotizador**, una herramienta que
-> automatiza la respuesta de suscripción a las plantillas Excel de los brokers:
-> su equipo sube el archivo y la app **autollena al instante** las coberturas
-> conocidas con el criterio del equipo, usa **IA solo para lo nuevo** (con
-> indicador de confianza y marca de "por revisar") y devuelve el **mismo Excel
-> respondido** + una hoja resumen. Aprende de cada corrección, así que mejora con
-> el uso.
+> Mi nombre es Juan Alvarado. Le escribo porque desarrollé una herramienta
+> pensada justamente para el día a día de su área: responder las plantillas de
+> coberturas que envían los brokers.
 >
-> Pensé en usted por estar a cargo de Suscripción: es justo donde se siente el
-> tiempo que toma responder plantilla por plantilla. La idea es pasar de **horas
-> a minutos** por cotización, con criterio más consistente entre suscriptores.
+> Se llama Auto-Cotizador. Su equipo sube el Excel del broker y la app autollena
+> al instante las coberturas que ya conoce, con el criterio de suscripción del
+> equipo; lo nuevo lo resuelve con IA y lo marca para revisar. Devuelve el mismo
+> archivo respondido, listo para reenviar. Y aprende: lo que un suscriptor
+> corrige, la próxima vez ya sale solo, igual en Quito que en Guayaquil.
 >
-> ¿Tendría **15-20 minutos** esta semana para una demo corta, idealmente con una
-> de sus propias plantillas? Me acomodo a su agenda.
+> Lo que más me entusiasma de mostrárselo a Cóndor es que mantiene el mismo
+> criterio en todo el equipo y reduce esas cotizaciones de horas a minutos,
+> liberando tiempo para lo que de verdad necesita ojo de suscriptor.
+>
+> ¿Tendría 15-20 minutos esta semana para una demo corta, idealmente con una
+> plantilla real de ustedes? Me acomodo a su agenda.
 >
 > Saludos cordiales,
-> Juan Alvarado · [teléfono] · [correo]
+> Juan Alvarado · juanalvarados2012@gmail.com
 
 ---
 
@@ -76,27 +78,29 @@ adoptar herramientas nuevas.
 **Redes:** IG @hispanadesegurosec · LinkedIn (Hispana de Seguros y Reaseguros) · FB · TikTok @hispanadesegurosec
 
 ### ✉️ Primer correo a Jose Almeida
-**Asunto:** Una herramienta para responder las plantillas de los brokers casi sola
+**Asunto:** Innovación aplicada a la suscripción: una demo de 15 min
 
 > Estimado Jose:
 >
-> Mi nombre es Juan Alvarado. Desarrollé **Auto-Cotizador**, una app web que
-> automatiza la suscripción de ramos generales: el equipo sube el Excel del
-> broker y la herramienta **autollena las coberturas conocidas**, resuelve lo
-> nuevo con **IA** (con control de confianza y "por revisar") y devuelve el mismo
-> archivo respondido. Aprende del criterio del equipo, así que cada vez pide
-> menos intervención.
+> Mi nombre es Juan Alvarado. Le escribo a usted por liderar Tecnología e
+> Innovación en Hispana, porque desarrollé algo que encaja con esa agenda sin
+> convertirse en un proyecto pesado de TI.
 >
-> Le escribo a usted por liderar Operaciones, Tecnología e Innovación: es una
-> herramienta liviana (es web, se entra con un correo, sin instalar nada) que
-> impacta directo en la productividad del área técnica y en el tiempo de
-> respuesta a los brokers.
+> Se llama Auto-Cotizador. El equipo técnico sube el Excel del broker y la app
+> responde sola las coberturas conocidas (con el criterio del equipo), resuelve
+> lo nuevo con IA y devuelve el mismo archivo respondido. No requiere instalar
+> nada: es web, se entra con un correo, y mejora con el uso porque aprende de
+> cada corrección.
 >
-> ¿Le haría sentido una **demo de 15-20 min** esta semana, con una plantilla
-> suya? Me acomodo a su horario.
+> En una compañía ágil como Hispana, donde la rapidez de respuesta al broker es
+> ventaja competitiva, esto libera horas del equipo técnico y acorta los tiempos
+> sin sumar personal.
+>
+> ¿Le haría sentido una demo de 15 min esta semana, con una plantilla suya? Me
+> acomodo a su horario.
 >
 > Saludos cordiales,
-> Juan Alvarado · [teléfono] · [correo]
+> Juan Alvarado · juanalvarados2012@gmail.com
 
 ---
 
@@ -127,27 +131,30 @@ tecnológica y la seguridad de datos → sponsor interno del piloto).
 > es copiar-pegar.
 
 ### ✉️ Primer correo a Adriana Guerrero
-**Asunto:** Auto-Cotizador: unificar y acelerar la suscripción tras la fusión
+**Asunto:** Apoyo a la fuerza de ventas y los brokers tras la fusión Equisuiza
 
 > Estimada Adriana:
 >
-> Mi nombre es Juan Alvarado. Desarrollé **Auto-Cotizador**, una herramienta que
-> automatiza la respuesta a las plantillas de los brokers en ramos generales: se
-> sube el Excel, la app **autollena las coberturas conocidas** con el criterio
-> del equipo, usa **IA solo para lo nuevo** y devuelve el mismo archivo
-> respondido. La memoria es **compartida por el equipo**: lo que aprende un
-> suscriptor lo aprovechan todos.
+> Mi nombre es Juan Alvarado. Le escribo porque desarrollé una herramienta que
+> ayuda directamente a la fuerza de ventas y al canal de brokers, que entiendo es
+> su foco.
 >
-> Le escribo pensando en la integración de Equinoccial y Ecuatoriano Suiza:
-> unificar el criterio de suscripción de dos equipos y mantener tiempos de
-> respuesta es justo donde esta herramienta ayuda. Y al ser un perfil comercial
-> corporativo, creo que es la persona indicada para ver si encaja como alianza.
+> Se llama Auto-Cotizador. Cuando llega una plantilla de coberturas de un broker,
+> el equipo sube el Excel y la app la responde casi sola: autollena lo conocido
+> con el criterio del equipo, resuelve lo nuevo con IA y devuelve el mismo archivo
+> respondido. La memoria es compartida, así que el criterio queda unificado entre
+> todos los suscriptores.
 >
-> ¿Le interesaría una **demo de 20 min** esta semana? Me acomodo a su agenda; si
-> prefiere, sumo a alguien de Procesos/Suscripción para verlo en concreto.
+> Pensé en Equisuiza por la fusión de Equinoccial y Ecuatoriano Suiza: juntar el
+> criterio de dos equipos de suscripción y responderle al broker rápido y parejo
+> es justo lo que resuelve. Un broker bien atendido cierra más, y ahí veo el
+> encaje comercial.
+>
+> ¿Le interesaría una demo de 20 min esta semana? Si prefiere, sumo a alguien de
+> Tecnología o Procesos para verlo en concreto. Me acomodo a su agenda.
 >
 > Saludos cordiales,
-> Juan Alvarado · [teléfono] · [correo]
+> Juan Alvarado · juanalvarados2012@gmail.com
 
 ---
 
