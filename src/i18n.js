@@ -43,6 +43,9 @@ const es = {
   memTitlePersonal: "Gestionar tu memoria",
   answersN: (n) => `${n} respuestas`,
   filesN: (n) => `${n} archivo(s)`,
+  adminOnlyKB: "Solo el administrador de la empresa puede modificar la base",
+  teamNudgeTitle: "👥 ¿Trabajan en equipo?",
+  teamNudgeBody: "Crea tu empresa (arriba, junto a tu cuenta) para que todos los suscriptores compartan la misma memoria y criterio.",
 
   // Toasts / mensajes
   msgNoSheets: "No se detectaron hojas de coberturas. Revisa que el archivo tenga hojas tipo Multirriesgo, Deducibles, etc.",
@@ -257,6 +260,9 @@ const en = {
   memTitlePersonal: "Manage your memory",
   answersN: (n) => `${n} answers`,
   filesN: (n) => `${n} file(s)`,
+  adminOnlyKB: "Only the company admin can modify the base",
+  teamNudgeTitle: "👥 Working as a team?",
+  teamNudgeBody: "Create your company (top right, next to your account) so all underwriters share the same memory and criteria.",
 
   // Toasts / messages
   msgNoSheets: "No coverage sheets detected. Make sure the file has sheets like Multirriesgo, Deducibles, etc.",

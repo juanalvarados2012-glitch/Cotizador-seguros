@@ -21,6 +21,19 @@ Excel respondido** + una hoja resumen. Stack: **React + Vite**, IA vía **Groq**
 
 ## ✅ Trabajo realizado en esta sesión
 
+### Más orientada a empresas (sin costo ni infraestructura nueva)
+- **Marca de la empresa:** la cabecera muestra el nombre de la agencia (🏢) y si
+  el usuario es Admin, cuando hay una empresa activa (Clerk Organization).
+- **Roles:** solo el **administrador** de la empresa puede modificar el "cerebro"
+  compartido (botones Vaciar / ↺ Base / Importar). Los suscriptores (miembros) lo
+  usan pero no pueden borrarlo. En uso personal hay control total. Evita que
+  alguien borre la memoria del equipo por error.
+- **Invitación a crear empresa:** banner en la pantalla de inicio (solo en uso
+  individual) que invita a crear la empresa para compartir memoria entre el equipo.
+- **Pendiente (siguiente nivel real):** memoria compartida en la NUBE (que el
+  equipo comparta entre distintas computadoras). Requiere una base de datos
+  pequeña (hay opciones gratis); el código actual aún guarda por navegador.
+
 ### Memoria semilla GENÉRICA (quita el criterio de Cóndor de la base)
 - La base de conocimiento semilla (`SEED_KB`) ya **no contiene criterio real de
   ninguna aseguradora**: coberturas estándar del mercado con respuestas neutras

@@ -496,12 +496,16 @@ function badge(tipo) {
 // ─── Componente ─────────────────────────────────────────────────────────────────
 export default function AutoCotizador() {
   const { user, isLoaded: userLoaded } = useUser();
-  const { organization, isLoaded: orgLoaded } = useOrganization();
+  const { organization, membership, isLoaded: orgLoaded } = useOrganization();
   const userId = user?.id || null;
   // Scope = empresa si hay una activa; si no, la cuenta personal del usuario.
   const orgId = organization?.id || null;
   const scopeId = orgId ? `org_${orgId}` : userId;
   const isCompany = !!orgId; // ¿la memoria es compartida por una empresa?
+  // Rol dentro de la empresa: solo el admin puede modificar el "cerebro"
+  // compartido (vaciar/resetear/importar). En uso personal hay control total.
+  const isOrgAdmin = (membership?.role || "").includes("admin");
+  const canManageKB = !organization || isOrgAdmin;
   const [lang, setLang] = useState(detectLang);
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
   const toggleLang = useCallback(() => {
@@ -1205,7 +1209,9 @@ export default function AutoCotizador() {
         <div style={sx.logo}>C</div>
         <div>
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: 0.5 }}>AUTO-COTIZADOR</div>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>{tr.appSubtitle}</div>
+          <div style={{ fontSize: 10, color: isCompany ? C.gold : C.muted, letterSpacing: isCompany ? 1 : 2, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 5 }}>
+            {isCompany ? <>🏢 {organization.name}{isOrgAdmin ? " · Admin" : ""}</> : tr.appSubtitle}
+          </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button onClick={toggleLang} title={tr.switchTo}
@@ -1369,22 +1375,28 @@ export default function AutoCotizador() {
               <input value={kbSearch} onChange={e => setKbSearch(e.target.value)} placeholder={tr.kbSearch}
                 style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
               <button style={sx.btnSm} onClick={exportKB}>{tr.kbExport}</button>
-              <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>{tr.kbImport}</button>
+              {canManageKB && <button style={sx.btnSm} onClick={() => kbFileRef.current?.click()}>{tr.kbImport}</button>}
               <span style={{ fontSize: 10.5, color: kbBackupTs ? C.muted : C.yellow }}>
                 {kbBackupTs ? tr.kbLastBackup(new Date(kbBackupTs).toLocaleDateString()) : tr.kbNoBackup}
               </span>
-              <button style={{ ...sx.btnSm, color: C.yellow, borderColor: "#4A3000" }}
-                onClick={() => {
-                  if (window.confirm(tr.kbBaseConfirm)) {
-                    persistKB(SEED_KB); notify("ok", tr.msgKBToBase);
-                  }
-                }}>{tr.kbBase}</button>
-              <button style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A" }}
-                onClick={() => {
-                  if (window.confirm(tr.kbClearConfirm)) {
-                    persistKB([]); notify("ok", tr.msgKBCleared);
-                  }
-                }}>{tr.kbClear}</button>
+              {canManageKB ? (
+                <>
+                  <button style={{ ...sx.btnSm, color: C.yellow, borderColor: "#4A3000" }}
+                    onClick={() => {
+                      if (window.confirm(tr.kbBaseConfirm)) {
+                        persistKB(SEED_KB); notify("ok", tr.msgKBToBase);
+                      }
+                    }}>{tr.kbBase}</button>
+                  <button style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A" }}
+                    onClick={() => {
+                      if (window.confirm(tr.kbClearConfirm)) {
+                        persistKB([]); notify("ok", tr.msgKBCleared);
+                      }
+                    }}>{tr.kbClear}</button>
+                </>
+              ) : (
+                <span style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>🔒 {tr.adminOnlyKB}</span>
+              )}
               <input ref={kbFileRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={e => { importKB(e.target.files[0]); e.target.value = ""; }} />
             </div>
@@ -1413,6 +1425,16 @@ export default function AutoCotizador() {
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
         {step === "upload" && (
           <div>
+            {/* Invitación a crear empresa (solo en uso individual) */}
+            {!isCompany && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", maxWidth: 760, margin: "0 auto 4px", background: "rgba(26,111,216,.08)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 16px" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.accentLight }}>{tr.teamNudgeTitle}</div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2, lineHeight: 1.5 }}>{tr.teamNudgeBody}</div>
+                </div>
+                <span style={{ fontSize: 22 }}>↗️</span>
+              </div>
+            )}
             {/* Hero */}
             <div style={{ position: "relative", overflow: "hidden", paddingBottom: 8 }}>
               <div className="hero-glow" />
