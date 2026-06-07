@@ -548,6 +548,11 @@ export default function AutoCotizador() {
   const [lang, setLang] = useState(detectLang);
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
   const L = (es, en) => (lang === "en" ? en : es); // textos nuevos del asistente
+  // La página personalizada (Asistente) solo se activa para este correo.
+  const ASSISTANT_EMAIL = "galvarado@seguroscondor.com";
+  const userEmail = (user?.primaryEmailAddress?.emailAddress || "").trim().toLowerCase();
+  const canUseAssistant = userEmail === ASSISTANT_EMAIL;
+  const effView = canUseAssistant ? view : "clasico"; // si no es ese correo, siempre clásico
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
   }, []);
@@ -1333,12 +1338,14 @@ export default function AutoCotizador() {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={() => setView(v => (v === "asistente" ? "clasico" : "asistente"))}
-            title={L("Asistente guiado paso a paso", "Step-by-step guided assistant")}
-            style={{ background: view === "asistente" ? `linear-gradient(135deg,${C.gold},#A8813E)` : "transparent", border: `1px solid ${view === "asistente" ? C.gold : C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
-            <div style={{ fontSize: 10, color: view === "asistente" ? C.bg : C.muted, letterSpacing: 1 }}>{L("MODO", "MODE")}</div>
-            <div style={{ fontSize: 13, color: view === "asistente" ? C.bg : C.gold, fontWeight: 700 }}>🪄 {view === "asistente" ? L("Clásico", "Classic") : L("Asistente", "Assistant")}</div>
-          </button>
+          {canUseAssistant && (
+            <button onClick={() => setView(v => (v === "asistente" ? "clasico" : "asistente"))}
+              title={L("Asistente guiado paso a paso", "Step-by-step guided assistant")}
+              style={{ background: view === "asistente" ? `linear-gradient(135deg,${C.gold},#A8813E)` : "transparent", border: `1px solid ${view === "asistente" ? C.gold : C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
+              <div style={{ fontSize: 10, color: view === "asistente" ? C.bg : C.muted, letterSpacing: 1 }}>{L("MODO", "MODE")}</div>
+              <div style={{ fontSize: 13, color: view === "asistente" ? C.bg : C.gold, fontWeight: 700 }}>🪄 {view === "asistente" ? L("Clásico", "Classic") : L("Asistente", "Assistant")}</div>
+            </button>
+          )}
           <button onClick={toggleLang} title={tr.switchTo}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>🌐</div>
@@ -1549,7 +1556,7 @@ export default function AutoCotizador() {
 
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
         {/* ─── Asistente guiado: subir archivo base + instrucciones + archivo nuevo ─── */}
-        {step === "upload" && view === "asistente" && (
+        {step === "upload" && effView === "asistente" && (
           <div className="fade-up" style={{ maxWidth: 680, margin: "0 auto" }}>
             <div style={{ textAlign: "center", marginBottom: 8 }}>
               <div style={{ fontSize: 40, marginBottom: 6 }}>🪄</div>
@@ -1639,7 +1646,7 @@ export default function AutoCotizador() {
           </div>
         )}
 
-        {step === "upload" && view === "clasico" && (
+        {step === "upload" && effView === "clasico" && (
           <div>
             {/* Invitación a crear empresa (solo en uso individual) */}
             {!isCompany && (
@@ -1710,7 +1717,8 @@ export default function AutoCotizador() {
               </div>
             </div>
 
-            {/* Opcional: archivo base + instrucciones para la IA (también en modo clásico) */}
+            {/* Opcional: archivo base + instrucciones para la IA (solo usuario autorizado) */}
+            {canUseAssistant && (
             <div className="fade-up delay-1" style={{ maxWidth: 720, margin: "16px auto 0", background: "rgba(196,151,90,.06)", border: `1px solid ${C.border}`, borderRadius: 12, padding: narrow ? "14px 14px" : "16px 20px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: C.gold }}>⚡ {L("Opcional: archivo base + instrucciones", "Optional: base file + instructions")}</span>
@@ -1738,6 +1746,7 @@ export default function AutoCotizador() {
                 </button>
               </div>
             </div>
+            )}
 
             {/* Compatible con Excel */}
             <div className="fade-up delay-1 grad-border" style={{ maxWidth: 720, margin: "20px auto 0", padding: narrow ? "18px 16px" : "22px 26px" }}>
