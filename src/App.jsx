@@ -678,7 +678,7 @@ export default function AutoCotizador() {
             const rec = await idbGet().catch(() => null);
             if (rec && rec.bytes && !cancelled) {
               const XLSX = await getXLSX();
-              setWb(XLSX.read(rec.bytes, { type: "array", cellStyles: true, cellNF: true }));
+              setWb(XLSX.read(rec.bytes, { type: "array", cellNF: true }));
               sessionBytesRef.current = rec.bytes;
             }
             notify("info", tr.msgSessionRestored(meta.fileName), 7000);
@@ -750,7 +750,7 @@ export default function AutoCotizador() {
       if (data.bytes) {
         sessionBytesRef.current = data.bytes;
         const XLSX = await getXLSX();
-        setWb(XLSX.read(data.bytes, { type: "array", cellStyles: true, cellNF: true }));
+        setWb(XLSX.read(data.bytes, { type: "array", cellNF: true }));
         idbSet({ fileName: id, bytes: data.bytes, ts: Date.now() }).catch(() => {});
       } else {
         setWb(null);
@@ -997,7 +997,7 @@ export default function AutoCotizador() {
     try {
       const XLSX = await getXLSX();
       const buf = await file.arrayBuffer();
-      const workbook = XLSX.read(buf, { type: "array", cellStyles: true, cellNF: true });
+      const workbook = XLSX.read(buf, { type: "array", cellNF: true });
       if (!workbook.SheetNames?.length) throw new Error(tr.msgNoSheetsInFile);
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
       // Guardar el archivo original para poder exportar aunque se recargue la página.
@@ -1049,7 +1049,7 @@ export default function AutoCotizador() {
         "Deducible responsabilidad civil",
       ]), "Deducibles");
       const arr = XLSX.write(wbk, { bookType: "xlsx", type: "array" });
-      const workbook = XLSX.read(arr, { type: "array", cellStyles: true, cellNF: true });
+      const workbook = XLSX.read(arr, { type: "array", cellNF: true });
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
       // XLSX.write con type:"array" devuelve un ArrayBuffer (no un Uint8Array),
       // así que se copia con slice() directamente, sin .buffer.
@@ -1199,7 +1199,7 @@ export default function AutoCotizador() {
         const bytes = (rec && rec.bytes) || sessionBytesRef.current;
         if (bytes) {
           const XLSXr = await getXLSX();
-          workbook = XLSXr.read(bytes, { type: "array", cellStyles: true, cellNF: true });
+          workbook = XLSXr.read(bytes, { type: "array", cellNF: true });
           setWb(workbook);
         }
       } catch { /* no se pudo recuperar */ }
