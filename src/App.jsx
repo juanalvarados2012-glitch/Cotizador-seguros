@@ -555,7 +555,6 @@ export default function AutoCotizador() {
   const userEmail = (user?.primaryEmailAddress?.emailAddress || "").trim().toLowerCase();
   const isGina = userEmail === "galvarado@seguroscondor.com";
   const canUseAssistant = true;     // visible para todos
-  const effView = view;
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
   }, []);
@@ -1559,7 +1558,7 @@ export default function AutoCotizador() {
 
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
         {/* ─── Asistente guiado: subir archivo base + instrucciones + archivo nuevo ─── */}
-        {step === "upload" && effView === "asistente" && (
+        {step === "upload" && view === "asistente" && (
           <div className="fade-up" style={{ maxWidth: 680, margin: "0 auto" }}>
             <div style={{ textAlign: "center", marginBottom: 8 }}>
               <div style={{ fontSize: 40, marginBottom: 6 }}>🪄</div>
@@ -1649,7 +1648,7 @@ export default function AutoCotizador() {
           </div>
         )}
 
-        {step === "upload" && effView === "clasico" && (
+        {step === "upload" && view === "clasico" && (
           <div>
             {/* Invitación a crear empresa (solo en uso individual) */}
             {!isCompany && (
