@@ -548,11 +548,14 @@ export default function AutoCotizador() {
   const [lang, setLang] = useState(detectLang);
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
   const L = (es, en) => (lang === "en" ? en : es); // textos nuevos del asistente
-  // La página personalizada (Asistente) solo se activa para estos correos.
-  const ASSISTANT_EMAILS = ["galvarado@seguroscondor.com", "juanalvarados2012@gmail.com"];
+  // El Asistente (subir archivo base + instrucciones + llenado automático con IA y
+  // memoria) está disponible para TODOS como pantalla de inicio: tanto la página
+  // personalizada de Gina como la página normal. El correo de Gina solo cambia el
+  // saludo personalizado.
   const userEmail = (user?.primaryEmailAddress?.emailAddress || "").trim().toLowerCase();
-  const canUseAssistant = ASSISTANT_EMAILS.includes(userEmail);
-  const effView = canUseAssistant ? view : "clasico"; // si no es ese correo, siempre clásico
+  const isGina = userEmail === "galvarado@seguroscondor.com";
+  const canUseAssistant = true;     // visible para todos
+  const effView = view;
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
   }, []);
