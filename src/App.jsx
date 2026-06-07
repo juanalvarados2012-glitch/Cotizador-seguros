@@ -548,10 +548,10 @@ export default function AutoCotizador() {
   const [lang, setLang] = useState(detectLang);
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
   const L = (es, en) => (lang === "en" ? en : es); // textos nuevos del asistente
-  // La página personalizada (Asistente) solo se activa para este correo.
-  const ASSISTANT_EMAIL = "galvarado@seguroscondor.com";
+  // La página personalizada (Asistente) solo se activa para estos correos.
+  const ASSISTANT_EMAILS = ["galvarado@seguroscondor.com", "juanalvarados2012@gmail.com"];
   const userEmail = (user?.primaryEmailAddress?.emailAddress || "").trim().toLowerCase();
-  const canUseAssistant = userEmail === ASSISTANT_EMAIL;
+  const canUseAssistant = ASSISTANT_EMAILS.includes(userEmail);
   const effView = canUseAssistant ? view : "clasico"; // si no es ese correo, siempre clásico
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
@@ -586,7 +586,7 @@ export default function AutoCotizador() {
   const backupFileRef = useRef();
   const sessionBytesRef = useRef(null); // bytes del archivo original (para exportar tras recargar)
   // ─── Asistente guiado (archivo base + instrucciones + voz) ──────────────────
-  const [view, setView] = useState("clasico");        // "clasico" | "asistente"
+  const [view, setView] = useState("asistente");      // "clasico" | "asistente" (inicia en el asistente si está autorizado)
   const [instrucciones, setInstrucciones] = useState(""); // guía libre para la IA
   const [baseFileName, setBaseFileName] = useState("");   // archivo base cargado
   const [baseCount, setBaseCount] = useState(0);          // pares cargados del base
