@@ -27,7 +27,8 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-    const { hoja = "", pendientes = [], kb = [] } = body;
+    const { hoja = "", pendientes = [], kb = [], instrucciones = "" } = body;
+    const extra = String(instrucciones || "").trim().slice(0, 1200);
 
     if (!Array.isArray(pendientes) || pendientes.length === 0) {
       return res.status(400).json({ error: "No se enviaron coberturas pendientes." });
@@ -43,7 +44,7 @@ export default async function handler(req, res) {
 
 RESPUESTAS PREVIAS DE LA ASEGURADORA (referencia de estilo y criterio):
 ${kbText}
-
+${extra ? `\nINSTRUCCIONES DEL USUARIO (tienen prioridad sobre todo lo demás, síguelas al pie de la letra):\n${extra}\n` : ""}
 COBERTURAS A RESPONDER:
 ${lista}
 

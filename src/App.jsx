@@ -384,6 +384,44 @@ function extractCoverages(wb, kb, XLSX) {
   return results;
 }
 
+// ─── Archivo base (key): construir memoria desde un archivo ya respondido ──────
+// Recorre TODAS las hojas y extrae pares "cobertura → respuesta" de las filas que
+// YA traen una respuesta escrita. Detección flexible: el usuario puede subir un
+// archivo de pares pregunta/respuesta o una cotización vieja completa, y la app
+// localiza sola la columna de respuestas. Devuelve un arreglo tipo KB.
+function kbFromWorkbook(wb, XLSX) {
+  const pairs = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    if (data.length === 0) continue;
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] || [];
+      // columna de cobertura = primera celda con texto descriptivo
+      let covCol = -1, texto = "";
+      for (let j = 0; j <= 2 && j < row.length; j++) {
+        const val = String(row[j]).trim();
+        if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
+          !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
+          !/^\d+$/.test(val)) { covCol = j; texto = val; break; }
+      }
+      if (covCol === -1) continue;
+      const respCol = findResponseCol(data, covCol);
+      const resp = String(row[respCol] != null ? row[respCol] : "").trim();
+      // solo sirve si la fila YA tiene una respuesta distinta a la cobertura
+      if (!resp || respCol === covCol) continue;
+      if (normalize(resp) === normalize(texto)) continue;
+      if (resp.length > 160) continue; // descarta párrafos largos (no son respuestas)
+      pairs.push({ cobertura: texto, respuesta: resp, count: 1 });
+    }
+  }
+  // dedup por cobertura normalizada (gana la última aparición)
+  const map = new Map();
+  for (const p of pairs) map.set(normalize(p.cobertura), p);
+  return [...map.values()];
+}
+
 // ─── IA solo para pendientes (vía proxy serverless /api/quote) ──────────────────
 // La API key vive en el servidor (Groq), nunca en el navegador.
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -404,7 +442,7 @@ function relevantKB(items, kb, max = 12) {
     .map(s => s.k);
 }
 
-async function callAI(pendientes, hoja, kb) {
+async function callAI(pendientes, hoja, kb, instrucciones = "") {
   const MAX_RETRIES = 4;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const ctrl = new AbortController();
@@ -416,6 +454,7 @@ async function callAI(pendientes, hoja, kb) {
         signal: ctrl.signal,
         body: JSON.stringify({
           hoja,
+          instrucciones: (instrucciones || "").slice(0, 1200),
           pendientes: pendientes.map(p => ({ texto: p.texto })),
           kb: kb.slice(0, 15).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
         }),
@@ -508,6 +547,7 @@ export default function AutoCotizador() {
   const canManageKB = !organization || isOrgAdmin;
   const [lang, setLang] = useState(detectLang);
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
+  const L = (es, en) => (lang === "en" ? en : es); // textos nuevos del asistente
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
   }, []);
@@ -540,6 +580,18 @@ export default function AutoCotizador() {
   const kbFileRef = useRef();
   const backupFileRef = useRef();
   const sessionBytesRef = useRef(null); // bytes del archivo original (para exportar tras recargar)
+  // ─── Asistente guiado (archivo base + instrucciones + voz) ──────────────────
+  const [view, setView] = useState("clasico");        // "clasico" | "asistente"
+  const [instrucciones, setInstrucciones] = useState(""); // guía libre para la IA
+  const [baseFileName, setBaseFileName] = useState("");   // archivo base cargado
+  const [baseCount, setBaseCount] = useState(0);          // pares cargados del base
+  const [baseLoading, setBaseLoading] = useState(false);
+  const [listening, setListening] = useState(false);      // dictado por voz activo
+  const instruccionesRef = useRef("");
+  const recognitionRef = useRef(null);
+  const autoRunRef = useRef(false);   // tras subir archivo nuevo en el asistente, llena solo
+  const baseFileRef = useRef();
+  const assistFileRef = useRef();
 
   // Responsive: detecta pantallas angostas
   useEffect(() => {
@@ -866,6 +918,64 @@ export default function AutoCotizador() {
     }
   };
 
+  // Cargar el "archivo base" (key): lo convierte en memoria de respuestas. Las
+  // respuestas del base tienen prioridad sobre la memoria previa. Beneficia tanto
+  // al asistente como a la app clásica (es la misma memoria).
+  const loadBaseFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) { notify("error", tr.msgBadFormat); return; }
+    setBaseLoading(true);
+    try {
+      const XLSX = await getXLSX();
+      const buf = await file.arrayBuffer();
+      const workbook = XLSX.read(buf, { type: "array" });
+      const pairs = kbFromWorkbook(workbook, XLSX);
+      if (pairs.length === 0) {
+        notify("info", L("No encontré pares pregunta/respuesta en ese archivo. ¿Tiene una columna con respuestas ya escritas?",
+          "I couldn't find question/answer pairs in that file. Does it have a column with answers already filled in?"));
+        return;
+      }
+      const map = new Map();
+      for (const k of kbRef.current) map.set(normalize(k.cobertura), k);
+      for (const p of pairs) map.set(normalize(p.cobertura), p); // el base gana
+      await persistKB([...map.values()]);
+      setBaseFileName(file.name);
+      setBaseCount(pairs.length);
+      notify("ok", L(`Archivo base cargado: ${pairs.length} respuestas listas para usar.`,
+        `Base file loaded: ${pairs.length} answers ready to use.`));
+    } catch (e) {
+      console.error(e);
+      notify("error", tr.msgFileError(e.message));
+    } finally {
+      setBaseLoading(false);
+    }
+  }, [notify, persistKB, tr, lang]);
+
+  // Dictado por voz para las instrucciones (Web Speech API, si el navegador la tiene).
+  const toggleVoice = useCallback(() => {
+    const SR = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) {
+      notify("info", L("Tu navegador no soporta dictado por voz. Usa Chrome de escritorio o escribe las instrucciones.",
+        "Your browser doesn't support voice dictation. Use desktop Chrome or type the instructions."));
+      return;
+    }
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; setListening(false); return; }
+    const rec = new SR();
+    rec.lang = lang === "en" ? "en-US" : "es-ES";
+    rec.continuous = true; rec.interimResults = false;
+    rec.onresult = (e) => {
+      let txt = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      txt = txt.trim();
+      if (!txt) return;
+      setInstrucciones(prev => { const next = (prev ? prev + " " : "") + txt; instruccionesRef.current = next; return next; });
+    };
+    rec.onend = () => { setListening(false); recognitionRef.current = null; };
+    rec.onerror = () => { setListening(false); recognitionRef.current = null; };
+    recognitionRef.current = rec; setListening(true);
+    try { rec.start(); } catch { setListening(false); recognitionRef.current = null; }
+  }, [lang, notify]);
+
   const handleFile = useCallback(async (file) => {
     if (!file) return;
     if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
@@ -997,7 +1107,7 @@ export default function AutoCotizador() {
         if (myIdx >= batches.length) return;
         const { sName, items } = batches[myIdx];
         try {
-          const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
+          const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current);
           ans.forEach(({ idx, respuesta, confianza }) => {
             const target = items[idx - 1];
             if (target && respuesta) {
@@ -1203,6 +1313,15 @@ export default function AutoCotizador() {
     ? `${Math.floor(savedMin / 60)} h ${savedMin % 60} min`
     : `${savedMin} min`;
 
+  // En el asistente, al terminar de cargar el archivo nuevo (step="review"),
+  // dispara la IA una sola vez para que "se llene solo".
+  useEffect(() => {
+    if (!autoRunRef.current || step !== "review" || processing) return;
+    const hasPend = Object.values(sheets).some(s => s.coverages.some(c => c.tipo === "Pendiente" && !c.editado));
+    autoRunRef.current = false;
+    if (hasPend) processAI();
+  }, [step, sheets, processing]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div style={sx.app}>
       <div style={{ ...sx.header, padding: narrow ? "14px 16px" : "18px 28px" }}>
@@ -1214,6 +1333,12 @@ export default function AutoCotizador() {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setView(v => (v === "asistente" ? "clasico" : "asistente"))}
+            title={L("Asistente guiado paso a paso", "Step-by-step guided assistant")}
+            style={{ background: view === "asistente" ? `linear-gradient(135deg,${C.gold},#A8813E)` : "transparent", border: `1px solid ${view === "asistente" ? C.gold : C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: view === "asistente" ? C.bg : C.muted, letterSpacing: 1 }}>{L("MODO", "MODE")}</div>
+            <div style={{ fontSize: 13, color: view === "asistente" ? C.bg : C.gold, fontWeight: 700 }}>🪄 {view === "asistente" ? L("Clásico", "Classic") : L("Asistente", "Assistant")}</div>
+          </button>
           <button onClick={toggleLang} title={tr.switchTo}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "center", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>🌐</div>
@@ -1423,7 +1548,98 @@ export default function AutoCotizador() {
       )}
 
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>
-        {step === "upload" && (
+        {/* ─── Asistente guiado: subir archivo base + instrucciones + archivo nuevo ─── */}
+        {step === "upload" && view === "asistente" && (
+          <div className="fade-up" style={{ maxWidth: 680, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 40, marginBottom: 6 }}>🪄</div>
+              <h1 style={{ fontSize: narrow ? 24 : 30, fontWeight: 700, margin: "0 0 6px", letterSpacing: -0.5 }}>
+                {user?.firstName ? L(`Hola, ${user.firstName} 👋`, `Hi, ${user.firstName} 👋`) : L("Asistente de cotización", "Quoting assistant")}
+              </h1>
+              <p style={{ color: "#9FB1CC", fontSize: 13.5, lineHeight: 1.65, margin: "0 auto", maxWidth: 480 }}>
+                {L("En 3 pasos: sube tu archivo base con las respuestas, dile qué hacer, y sube el archivo nuevo. Lo lleno solo.",
+                   "In 3 steps: upload your base file with the answers, tell me what to do, and upload the new file. I'll fill it for you.")}
+              </p>
+            </div>
+
+            {/* Paso 1 — archivo base */}
+            <div style={{ ...sx.card, marginTop: 16, borderColor: baseCount ? C.green : C.border }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 20 }}>{baseCount ? "✅" : "1️⃣"}</span>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{L("Sube tu archivo base (tu “key” de respuestas)", "Upload your base file (your answer “key”)")}</div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2, lineHeight: 1.5 }}>
+                    {baseCount
+                      ? L(`${baseFileName} · ${baseCount} respuestas cargadas`, `${baseFileName} · ${baseCount} answers loaded`)
+                      : L("Un Excel con tus respuestas (o una cotización vieja ya respondida). Detecto la columna sola.",
+                          "An Excel with your answers (or an old answered quote). I detect the column automatically.")}
+                  </div>
+                </div>
+                <button style={{ ...sx.btn, opacity: baseLoading ? 0.6 : 1 }} disabled={baseLoading}
+                  onClick={() => baseFileRef.current?.click()}>
+                  {baseLoading ? L("Leyendo…", "Reading…") : baseCount ? L("Cambiar", "Change") : L("Elegir archivo", "Choose file")}
+                </button>
+                <input ref={baseFileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }}
+                  onChange={e => { loadBaseFile(e.target.files[0]); e.target.value = ""; }} />
+              </div>
+            </div>
+
+            {/* Paso 2 — instrucciones (texto o voz) */}
+            <div style={{ ...sx.card, marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 20 }}>2️⃣</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{L("Dile qué hacer (escribe o habla)", "Tell it what to do (type or speak)")}</div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{L("Opcional. Ej.: “Si no estás seguro, pon REVISAR. Usa límites en dólares.”", "Optional. E.g.: “If unsure, put REVISAR. Use limits in dollars.”")}</div>
+                </div>
+                <button onClick={toggleVoice} title={L("Dictar por voz", "Dictate by voice")}
+                  style={{ ...sx.btnSm, color: listening ? C.red : C.accentLight, borderColor: listening ? C.red : C.border, padding: "8px 12px", fontSize: 14 }}>
+                  {listening ? L("⏹ Detener", "⏹ Stop") : "🎤"}
+                </button>
+              </div>
+              <textarea value={instrucciones}
+                onChange={e => { setInstrucciones(e.target.value); instruccionesRef.current = e.target.value; }}
+                placeholder={L("Escribe aquí las instrucciones para la IA…", "Type the instructions for the AI here…")}
+                style={{ ...sx.ta, minHeight: 70 }} />
+              {listening && <div style={{ fontSize: 11, color: C.red, marginTop: 6 }}>🔴 {L("Escuchando… habla y aparecerá el texto.", "Listening… speak and the text will appear.")}</div>}
+            </div>
+
+            {/* Paso 3 — archivo nuevo a llenar */}
+            <div style={{ ...sx.card, marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 20 }}>3️⃣</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{L("Sube el archivo nuevo a llenar", "Upload the new file to fill")}</div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{L("Lo lleno con tu archivo base + tus instrucciones y te lo devuelvo respondido.", "I fill it with your base file + your instructions and return it answered.")}</div>
+                </div>
+              </div>
+              <div
+                style={{ ...sx.drop, padding: narrow ? 26 : 36, ...(dragOver ? { borderColor: C.accentLight, background: "#0A1F3A" } : {}) }}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => { e.preventDefault(); setDragOver(false); autoRunRef.current = true; handleFile(e.dataTransfer.files[0]); }}
+                onClick={() => assistFileRef.current?.click()}
+              >
+                <div className={parsing ? "" : "float"} style={{ fontSize: 34, marginBottom: 8 }}>{parsing ? "⏳" : "📂"}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{parsing ? L("Leyendo…", "Reading…") : L("Arrastra o haz clic para subir", "Drag or click to upload")}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>.xlsx · .xls · .xlsm</div>
+                <input ref={assistFileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }}
+                  onChange={e => { autoRunRef.current = true; handleFile(e.target.files[0]); }} />
+              </div>
+              {!baseCount && (
+                <div style={{ fontSize: 11, color: C.yellow, marginTop: 8, textAlign: "center" }}>
+                  💡 {L("Tip: sube primero tu archivo base (paso 1) para mejores respuestas.", "Tip: upload your base file first (step 1) for better answers.")}
+                </div>
+              )}
+            </div>
+
+            <div style={{ textAlign: "center", marginTop: 16 }}>
+              <button onClick={() => setView("clasico")} style={{ ...sx.btnSm, padding: "8px 16px" }}>← {L("Ir al modo clásico", "Go to classic mode")}</button>
+            </div>
+          </div>
+        )}
+
+        {step === "upload" && view === "clasico" && (
           <div>
             {/* Invitación a crear empresa (solo en uso individual) */}
             {!isCompany && (
@@ -1491,6 +1707,35 @@ export default function AutoCotizador() {
                 <span>{tr.trustKey}</span>
                 <span>{tr.trustMem(kb.length)}</span>
                 <span>{tr.trustExcel}</span>
+              </div>
+            </div>
+
+            {/* Opcional: archivo base + instrucciones para la IA (también en modo clásico) */}
+            <div className="fade-up delay-1" style={{ maxWidth: 720, margin: "16px auto 0", background: "rgba(196,151,90,.06)", border: `1px solid ${C.border}`, borderRadius: 12, padding: narrow ? "14px 14px" : "16px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.gold }}>⚡ {L("Opcional: archivo base + instrucciones", "Optional: base file + instructions")}</span>
+                <button onClick={() => setView("asistente")} style={{ ...sx.btnSm, marginLeft: "auto", color: C.gold, borderColor: C.gold }}>🪄 {L("Abrir asistente guiado", "Open guided assistant")}</button>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+                <button style={{ ...sx.btnSm, opacity: baseLoading ? 0.6 : 1 }} disabled={baseLoading}
+                  onClick={() => baseFileRef.current?.click()}>
+                  📑 {baseLoading ? L("Leyendo…", "Reading…") : L("Cargar archivo base", "Load base file")}
+                </button>
+                <input ref={baseFileRef} type="file" accept=".xlsx,.xls,.xlsm" style={{ display: "none" }}
+                  onChange={e => { loadBaseFile(e.target.files[0]); e.target.value = ""; }} />
+                <span style={{ fontSize: 11, color: baseCount ? C.green : C.muted }}>
+                  {baseCount ? `✓ ${baseFileName} · ${baseCount}` : L("Saca las respuestas de un archivo ya respondido", "Pulls answers from an already-answered file")}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <textarea value={instrucciones}
+                  onChange={e => { setInstrucciones(e.target.value); instruccionesRef.current = e.target.value; }}
+                  placeholder={L("Instrucciones para la IA (opcional). Ej.: “Si no estás seguro, pon REVISAR.”", "Instructions for the AI (optional). E.g.: “If unsure, put REVISAR.”")}
+                  style={{ ...sx.ta, minHeight: 46 }} />
+                <button onClick={toggleVoice} title={L("Dictar por voz", "Dictate by voice")}
+                  style={{ ...sx.btnSm, color: listening ? C.red : C.accentLight, borderColor: listening ? C.red : C.border, padding: "9px 12px", fontSize: 14 }}>
+                  {listening ? "⏹" : "🎤"}
+                </button>
               </div>
             </div>
 
