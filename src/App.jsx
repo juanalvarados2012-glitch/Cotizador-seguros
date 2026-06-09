@@ -328,7 +328,7 @@ function findResponseCol(data, coverageCol) {
     const row = data[r] || [];
     for (let c = row.length - 1; c >= 0; c--) {
       const v = normalize(row[c]);
-      if (c > coverageCol && /(cotizacion|respuesta|oferta|aseguradora)/.test(v)) return c;
+      if (c > coverageCol && /(cotizacion|respuesta|oferta|aseguradora|propuesta|condiciones ofertadas)/.test(v)) return c;
     }
   }
   // fallback: una columna a la derecha del bloque de coberturas
@@ -338,48 +338,79 @@ function findResponseCol(data, coverageCol) {
 }
 
 // ─── Extraer coberturas del workbook ───────────────────────────────────────────
+// Ramos típicos del mercado ecuatoriano para reconocer hojas por su nombre.
 const RELEVANT = ["multirriesgo","multiriesgo","deducible","dinero","valores","equipo","maquinaria",
-  "vehiculo","vehículo","veh ","responsabilidad","transporte","garantia","garantía","incendio","robo"];
+  "vehiculo","vehículo","veh ","responsabilidad","transporte","garantia","garantía","incendio","robo",
+  "electronico","electrónico","fidelidad","cumplimiento","anticipo","accidentes","lucro","rotura",
+  "todo riesgo","casco","cobertura","ramo"];
+
+// Celdas que son ENCABEZADO de tabla (no una cobertura real). Solo coincidencia
+// exacta de toda la celda, para no descartar coberturas reales que empiecen igual.
+const HEADER_CELLS = /^((nuestra )?respuesta(s)?( aseguradora| compania)?|cobertura(s)?( item)?|item(s)?|descripcion|detalle|amparos|beneficios|condiciones( particulares| generales)?|observaciones|cotizacion|aseguradora)$/;
+
+function isHeaderCell(val) { return HEADER_CELLS.test(normalize(val)); }
+
+function isListSheet(clean) {
+  return clean.includes("listado") || clean.includes("list ") || clean.startsWith("list");
+}
+
+function extractSheetCoverages(wb, sheetName, kb, XLSX) {
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return null;
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length === 0) return null;
+
+  const coverages = [];
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    // columna de cobertura = primera celda con texto descriptivo
+    let covCol = -1, texto = "";
+    for (let j = 0; j <= 2 && j < row.length; j++) {
+      const val = String(row[j]).trim();
+      if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
+        !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
+        !isHeaderCell(val) &&
+        !/^\d+$/.test(val)) {
+        covCol = j; texto = val; break;
+      }
+    }
+    if (covCol === -1) continue;
+
+    const respCol = findResponseCol(data, covCol);
+    const match = matchKB(texto, kb);
+    coverages.push({
+      fila: i, covCol, respCol,
+      texto,
+      respuesta: match ? match.respuesta : "",
+      tipo: match ? match.tipo : "Pendiente",
+      score: match ? match.score : 0,
+      editado: false,
+    });
+  }
+  if (coverages.length === 0) return null;
+  return { coverages, respCol: coverages[0].respCol };
+}
 
 function extractCoverages(wb, kb, XLSX) {
   const results = {};
+  // 1ª pasada: hojas cuyo nombre menciona un ramo conocido.
   for (const sheetName of wb.SheetNames) {
     const clean = normalize(sheetName);
     if (!RELEVANT.some(r => clean.includes(normalize(r)))) continue;
-    // saltar hojas de listados/inventarios
-    if (clean.includes("listado") || clean.includes("list ") || clean.startsWith("list")) continue;
-
-    const ws = wb.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-    if (data.length === 0) continue;
-
-    const coverages = [];
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      // columna de cobertura = primera celda con texto descriptivo
-      let covCol = -1, texto = "";
-      for (let j = 0; j <= 2 && j < row.length; j++) {
-        const val = String(row[j]).trim();
-        if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
-          !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
-          !/^\d+$/.test(val)) {
-          covCol = j; texto = val; break;
-        }
-      }
-      if (covCol === -1) continue;
-
-      const respCol = findResponseCol(data, covCol);
-      const match = matchKB(texto, kb);
-      coverages.push({
-        fila: i, covCol, respCol,
-        texto,
-        respuesta: match ? match.respuesta : "",
-        tipo: match ? match.tipo : "Pendiente",
-        score: match ? match.score : 0,
-        editado: false,
-      });
+    if (isListSheet(clean)) continue;
+    const r = extractSheetCoverages(wb, sheetName, kb, XLSX);
+    if (r) results[sheetName] = r;
+  }
+  // 2ª pasada (respaldo): si ningún nombre de hoja coincidió, se analizan TODAS
+  // las hojas (menos listados) y se aceptan las que tengan suficientes filas de
+  // cobertura. Así la app funciona aunque el broker nombre sus hojas distinto
+  // ("Hoja1", "Slip", el nombre del cliente, etc.).
+  if (Object.keys(results).length === 0) {
+    for (const sheetName of wb.SheetNames) {
+      if (isListSheet(normalize(sheetName))) continue;
+      const r = extractSheetCoverages(wb, sheetName, kb, XLSX);
+      if (r && r.coverages.length >= 3) results[sheetName] = r;
     }
-    if (coverages.length > 0) results[sheetName] = { coverages, respCol: coverages[0].respCol };
   }
   return results;
 }
@@ -404,13 +435,14 @@ function kbFromWorkbook(wb, XLSX) {
         const val = String(row[j]).trim();
         if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
           !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
+          !isHeaderCell(val) &&
           !/^\d+$/.test(val)) { covCol = j; texto = val; break; }
       }
       if (covCol === -1) continue;
       const respCol = findResponseCol(data, covCol);
       const resp = String(row[respCol] != null ? row[respCol] : "").trim();
       // solo sirve si la fila YA tiene una respuesta distinta a la cobertura
-      if (!resp || respCol === covCol) continue;
+      if (!resp || respCol === covCol || isHeaderCell(resp)) continue;
       if (normalize(resp) === normalize(texto)) continue;
       if (resp.length > 160) continue; // descarta párrafos largos (no son respuestas)
       pairs.push({ cobertura: texto, respuesta: resp, count: 1 });
@@ -902,7 +934,7 @@ export default function AutoCotizador() {
     setRowLoading(`${sName}::${idx}`);
     try {
       const items = [{ texto: c.texto }];
-      const ans = await callAI(items, sName, relevantKB(items, kbRef.current));
+      const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current);
       const r = ans[0];
       if (r && r.respuesta) {
         setSheets(prev => {
@@ -1213,6 +1245,17 @@ export default function AutoCotizador() {
     if (totalResp === 0) {
       notify("info", tr.msgNothingToExport);
       return;
+    }
+    // Control de calidad: avisa si la cotización va incompleta o con respuestas
+    // por confirmar, para no enviarle al broker un archivo a medias por error.
+    if (pend > 0 || revisar > 0) {
+      const partes = [];
+      if (pend > 0) partes.push(L(`${pend} sin responder`, `${pend} unanswered`));
+      if (revisar > 0) partes.push(L(`${revisar} marcadas "por revisar"`, `${revisar} flagged "review"`));
+      const ok = window.confirm(L(
+        `Atención: quedan ${partes.join(" y ")}. ¿Exportar de todas formas?`,
+        `Heads up: ${partes.join(" and ")} remain. Export anyway?`));
+      if (!ok) return;
     }
     try {
     const XLSX = await getXLSX();

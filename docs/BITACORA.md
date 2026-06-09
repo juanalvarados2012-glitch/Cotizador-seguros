@@ -3,7 +3,35 @@
 Registro de las decisiones y cambios trabajados en la app. Sirve como memoria
 del proyecto para retomar el trabajo más adelante.
 
-> Última actualización: 2026-05-31
+> Última actualización: 2026-06-09
+
+---
+
+## ✅ Mejoras gratis para venta a aseguradoras de Ecuador (2026-06-09)
+
+- **Detección de hojas con respaldo:** si ninguna hoja del Excel coincide por
+  nombre con un ramo conocido, la app ahora analiza TODAS las hojas (menos
+  listados) y acepta las que tengan al menos 3 filas de cobertura. Antes, un
+  archivo con hojas llamadas "Hoja1", "Slip" o el nombre del cliente decía
+  "no detecté hojas". También se agregaron ramos típicos de Ecuador a la lista
+  de nombres reconocidos (equipo electrónico, fidelidad, cumplimiento, anticipo,
+  accidentes, lucro cesante, rotura, todo riesgo, casco).
+- **Filtro de encabezados:** celdas que son encabezado de tabla ("COBERTURA /
+  ÍTEM", "DESCRIPCIÓN", "RESPUESTA ASEGURADORA", etc.) ya no entran como
+  coberturas pendientes ni se aprenden como pares basura desde el archivo base.
+  Solo se excluyen coincidencias exactas de toda la celda, así no se pierden
+  coberturas reales que empiecen igual ("Cobertura automática para…").
+- **Control de calidad al exportar:** si quedan ítems sin responder o marcados
+  "por revisar", la app pide confirmación antes de exportar, para no enviarle
+  al broker una cotización incompleta por error.
+- **Columna de respuesta:** ahora también se reconoce por los encabezados
+  "PROPUESTA" y "CONDICIONES OFERTADAS" (comunes en slips de Ecuador).
+- **IA por fila consistente:** el botón 🤖 de una sola fila ahora también envía
+  las instrucciones del usuario (antes solo el llenado por lotes las usaba).
+- **Prompt con contexto Ecuador:** la IA recibe la regla de responder cifras en
+  dólares USD (moneda de Ecuador) con formato $5,000.
+- **Endpoint `/api/quote` endurecido:** máximo 60 coberturas por llamada y
+  recortes de tamaño en textos y memoria (controla tokens y payloads abusivos).
 
 ---
 

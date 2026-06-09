@@ -33,12 +33,17 @@ export default async function handler(req, res) {
     if (!Array.isArray(pendientes) || pendientes.length === 0) {
       return res.status(400).json({ error: "No se enviaron coberturas pendientes." });
     }
+    if (pendientes.length > 60) {
+      return res.status(400).json({ error: "Demasiadas coberturas en una llamada (máximo 60 por lote)." });
+    }
 
+    // Topes de tamaño: controlan los tokens por llamada y evitan payloads abusivos.
+    const clip = (s, n) => String(s || "").slice(0, n);
     const kbText = (Array.isArray(kb) ? kb : [])
       .slice(0, 40)
-      .map((k) => `"${k.cobertura}" → "${k.respuesta}"`)
+      .map((k) => `"${clip(k && k.cobertura, 200)}" → "${clip(k && k.respuesta, 200)}"`)
       .join("\n");
-    const lista = pendientes.map((c, i) => `${i + 1}. "${c.texto}"`).join("\n");
+    const lista = pendientes.map((c, i) => `${i + 1}. "${clip(c && c.texto, 300)}"`).join("\n");
 
     const prompt = `Genera la respuesta de la aseguradora para cada cobertura del broker en la hoja "${hoja}".
 
@@ -50,6 +55,7 @@ ${lista}
 
 Reglas:
 - Usa el estilo de las respuestas previas (suelen ser "Ok", "NO", un límite como "Hasta $5,000", o una aclaración corta).
+- Las cifras monetarias van en dólares de Estados Unidos (USD), la moneda de Ecuador, con formato $5,000.
 - Si no hay precedente claro, responde "REVISAR".
 - Devuelve SOLO un objeto JSON con esta forma exacta, sin texto adicional:
 {"respuestas":[{"idx":1,"respuesta":"...","confianza":"alta|media|baja"}]}`;
