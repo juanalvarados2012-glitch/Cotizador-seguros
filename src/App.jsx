@@ -283,8 +283,20 @@ function normalize(s) {
     .replace(/\s+/g, " ")
     .trim();
 }
+// Abreviaturas comunes en slips de seguros (Ecuador): se expanden a sus palabras
+// completas para que "R.C." haga match con "Responsabilidad Civil", etc.
+// Solo siglas inequívocas del ramo, para no crear coincidencias falsas.
+const ABBR = {
+  rc: ["responsabilidad", "civil"],
+  amit: ["actos", "malintencionados", "terceros"],
+  hmacc: ["huelga", "motin", "asonada", "conmocion", "civil"],
+  deduc: ["deducible"],
+  resp: ["responsabilidad"],
+};
 function tokens(s) {
-  return normalize(s).split(" ").filter(w => w.length > 2 && !STOP.has(w));
+  return normalize(s).split(" ")
+    .flatMap(w => (ABBR[w] !== undefined ? ABBR[w] : [w]))
+    .filter(w => w.length > 2 && !STOP.has(w));
 }
 function jaccard(a, b) {
   const A = new Set(tokens(a)), B = new Set(tokens(b));
@@ -943,9 +955,13 @@ export default function AutoCotizador() {
           t.respuesta = r.respuesta; t.tipo = "IA"; t.confianza = r.confianza || "media";
           return u;
         });
-        // Auto-aprende si es confiable (igual que el llenado por lotes).
+        // Auto-aprende si es confiable (igual que el llenado por lotes) y
+        // propaga a las coberturas idénticas que sigan pendientes.
         const conf = (r.confianza || "media").toLowerCase();
-        if (conf !== "baja" && !/^\s*revisar\s*$/i.test(r.respuesta)) learn(c.texto, r.respuesta);
+        if (conf !== "baja" && !/^\s*revisar\s*$/i.test(r.respuesta)) {
+          learn(c.texto, r.respuesta);
+          propagateToDuplicates(c.texto, r.respuesta, sName, idx);
+        }
         notify("ok", tr.msgAISingleOk);
       } else {
         notify("info", tr.msgAISingleNone);
@@ -1209,6 +1225,29 @@ export default function AutoCotizador() {
       return u;
     });
   };
+
+  // Responder una vez, llenar todas: aplica la misma respuesta a las coberturas
+  // IDÉNTICAS (mismo texto normalizado) que sigan pendientes en cualquier hoja.
+  // Devuelve cuántas llenó. Solo texto idéntico, para no propagar errores.
+  const propagateToDuplicates = (texto, respuesta, exceptSheet, exceptIdx) => {
+    const n = normalize(texto);
+    const dupes = [];
+    Object.entries(sheets).forEach(([sn, { coverages }]) => coverages.forEach((cc, i) => {
+      if (sn === exceptSheet && i === exceptIdx) return;
+      if (!cc.respuesta && !cc.editado && normalize(cc.texto) === n) dupes.push([sn, i]);
+    }));
+    if (dupes.length === 0) return 0;
+    setSheets(prev => {
+      const u = { ...prev };
+      dupes.forEach(([sn, i]) => {
+        const cc = u[sn].coverages[i];
+        cc.respuesta = respuesta; cc.tipo = "Exacta"; cc.score = 1;
+      });
+      return u;
+    });
+    return dupes.length;
+  };
+
   const onBlurLearn = (sName, idx) => {
     const c = sheets[sName].coverages[idx];
     if (c.editado && c.respuesta) {
@@ -1218,6 +1257,52 @@ export default function AutoCotizador() {
         u[sName].coverages[idx].tipo = "Aprendida";
         return u;
       });
+      const nDup = propagateToDuplicates(c.texto, c.respuesta, sName, idx);
+      if (nDup > 0) {
+        notify("ok", L(`Respuesta aplicada también a ${nDup} cobertura(s) idéntica(s) pendiente(s).`,
+          `Answer also applied to ${nDup} identical pending coverage(s).`));
+      }
+    }
+  };
+
+  // Agregar a mano una hoja que la detección automática no incluyó. Funciona
+  // sobre el archivo ya cargado: extrae sus coberturas sin filtrar por nombre.
+  const addSheetManually = async (name) => {
+    if (!wb || !name) return;
+    try {
+      const XLSX = await getXLSX();
+      const r = extractSheetCoverages(wb, name, kbRef.current, XLSX);
+      if (!r) {
+        notify("info", L(`No encontré coberturas en la hoja "${name}".`,
+          `I couldn't find coverages in sheet "${name}".`));
+        return;
+      }
+      setSheets(prev => ({ ...prev, [name]: r }));
+      setActive(name);
+      notify("ok", L(`Hoja "${name}" agregada: ${r.coverages.length} ítems.`,
+        `Sheet "${name}" added: ${r.coverages.length} items.`));
+    } catch (e) {
+      notify("error", tr.msgFileError(e.message));
+    }
+  };
+
+  // Copia un resumen de estado listo para pegar en WhatsApp o correo.
+  const copySummary = async () => {
+    const text = [
+      L(`*Cotización: ${fileName}*`, `*Quote: ${fileName}*`),
+      L(`✅ Respondidas: ${answered} de ${total} (${pct}%)`, `✅ Answered: ${answered} of ${total} (${pct}%)`),
+      L(`⏳ Pendientes: ${pend}`, `⏳ Pending: ${pend}`),
+      L(`⚠️ Por revisar: ${revisar}`, `⚠️ To review: ${revisar}`),
+      L(`⏱ Ahorro estimado: ${savedLabel}`, `⏱ Estimated time saved: ${savedLabel}`),
+      L(`_Generado con Auto-Cotizador · ${new Date().toLocaleString()}_`,
+        `_Generated with Auto-Cotizador · ${new Date().toLocaleString()}_`),
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("ok", L("Resumen copiado. Pégalo en WhatsApp o en un correo.",
+        "Summary copied. Paste it into WhatsApp or an email."));
+    } catch {
+      notify("error", L("No se pudo copiar al portapapeles.", "Couldn't copy to clipboard."));
     }
   };
 
@@ -1335,7 +1420,8 @@ export default function AutoCotizador() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}${tr.rpSuffix}.xlsx`;
+    // El nombre lleva la fecha para que cada versión exportada quede identificada.
+    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}${tr.rpSuffix}_${new Date().toISOString().slice(0, 10)}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1933,6 +2019,10 @@ export default function AutoCotizador() {
                 {processing ? tr.btnProcessing(progress, progressText) : tr.btnCompleteAI(pend)}
               </button>
               <button style={sx.btn} onClick={exportFile}>{tr.btnExport}</button>
+              <button style={{ ...sx.btnSm, padding: "10px 14px" }} onClick={copySummary}
+                title={L("Copia el estado de la cotización para pegarlo en WhatsApp o correo", "Copies the quote status to paste into WhatsApp or email")}>
+                📋 {L("Copiar resumen", "Copy summary")}
+              </button>
               <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>{tr.btnOther}</button>
             </div>
 
@@ -1957,6 +2047,14 @@ export default function AutoCotizador() {
                   </button>
                 );
               })}
+              {wb && wb.SheetNames.some(n => !sheets[n]) && (
+                <select value="" onChange={e => addSheetManually(e.target.value)}
+                  title={L("Agrega una hoja del archivo que no se detectó automáticamente", "Add a sheet from the file that wasn't auto-detected")}
+                  style={{ background: C.surface, border: `1px dashed ${C.border}`, color: C.muted, borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontFamily: F }}>
+                  <option value="">➕ {L("Agregar hoja…", "Add sheet…")}</option>
+                  {wb.SheetNames.filter(n => !sheets[n]).map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
             </div>
 
             {active && sheets[active] && (() => {

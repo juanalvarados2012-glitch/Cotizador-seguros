@@ -7,6 +7,29 @@ del proyecto para retomar el trabajo más adelante.
 
 ---
 
+## ✅ Segunda tanda de mejoras gratis (2026-06-09)
+
+- **Pantalla de error amable (ErrorBoundary):** si algo truena dentro de la app,
+  ya no hay pantalla negra: aparece un mensaje claro con botón "Recargar" y la
+  aclaración de que la memoria y la sesión siguen guardadas.
+- **Responder una vez, llenar todas:** al corregir una respuesta (o usar la IA
+  en una fila), la misma respuesta se aplica automáticamente a las coberturas
+  con texto idéntico que sigan pendientes en cualquier hoja. Solo texto
+  idéntico, para no propagar errores.
+- **Agregar hoja a mano:** en la pantalla de revisión hay un selector
+  "➕ Agregar hoja…" con las hojas del Excel que la detección automática no
+  incluyó; un clic las suma al análisis.
+- **📋 Copiar resumen:** botón que copia el estado de la cotización (archivo,
+  respondidas, pendientes, por revisar, ahorro) con formato listo para pegar
+  en WhatsApp o correo.
+- **Matching que entiende siglas del ramo:** "R.C.", "AMIT", "HMACC" y "Deduc."
+  se expanden a sus palabras completas antes de comparar, así el autollenado
+  alcanza más filas sin gastar IA. Probado sin falsos positivos.
+- **Archivo exportado con fecha:** el nombre ahora incluye la fecha
+  (`_RESPONDIDO_2026-06-09.xlsx`) para distinguir versiones.
+
+---
+
 ## ✅ Mejoras gratis para venta a aseguradoras de Ecuador (2026-06-09)
 
 - **Detección de hojas con respaldo:** si ninguna hoja del Excel coincide por

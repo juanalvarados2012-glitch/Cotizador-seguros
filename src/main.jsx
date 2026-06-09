@@ -39,6 +39,42 @@ function MissingKey() {
   );
 }
 
+// Red de seguridad: si algo truena dentro de la app, se muestra un mensaje
+// amable con botón de recarga en vez de una pantalla negra. Los datos no se
+// pierden (la sesión y la memoria quedan guardadas en el navegador).
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("Error de la app:", error, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{
+        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24, background: "#0B0F1A", color: "#E8EDF5",
+        fontFamily: "'IBM Plex Mono',monospace", textAlign: "center", lineHeight: 1.7,
+      }}>
+        <div style={{ maxWidth: 480 }}>
+          <div style={{ fontSize: 38, marginBottom: 12 }}>😅</div>
+          <h1 style={{ fontSize: 18, marginBottom: 10 }}>Algo salió mal / Something went wrong</h1>
+          <p style={{ fontSize: 13, color: "#9FB1CC", marginBottom: 18 }}>
+            Tranquilo: tu memoria y tu sesión están guardadas en este navegador.
+            Recarga la página para continuar donde quedaste.
+          </p>
+          <button onClick={() => window.location.reload()} style={{
+            background: "linear-gradient(135deg,#C4975A,#A8813E)", color: "#0B0F1A",
+            border: "none", borderRadius: 8, padding: "12px 26px", cursor: "pointer",
+            fontSize: 14, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+          }}>↺ Recargar / Reload</button>
+          <div style={{ fontSize: 10.5, color: "#6B7FA0", marginTop: 16 }}>
+            Detalle técnico: {String(this.state.error && this.state.error.message || this.state.error)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
 const root = createRoot(document.getElementById("root"));
 
 if (!PUBLISHABLE_KEY) {
@@ -46,14 +82,16 @@ if (!PUBLISHABLE_KEY) {
 } else {
   root.render(
     <React.StrictMode>
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
-        <SignedIn>
-          <App />
-        </SignedIn>
-        <SignedOut>
-          <Gate />
-        </SignedOut>
-      </ClerkProvider>
+      <ErrorBoundary>
+        <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
+          <SignedIn>
+            <App />
+          </SignedIn>
+          <SignedOut>
+            <Gate />
+          </SignedOut>
+        </ClerkProvider>
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }
