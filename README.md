@@ -1,58 +1,123 @@
-# 🦅 Auto-Cotizador
+# 🚗 Auto Cotizador White-Label · Seguros vehiculares para Ecuador
 
-App web para automatizar las cotizaciones de seguros. Sube la plantilla Excel del broker y la app:
+Cotizador de seguros de auto **100% client-side** (React + Vite, sin backend) que una
+aseguradora o broker embebe en su sitio web o usa internamente. Todo —logo, colores,
+nombre, tarifas y coberturas— se personaliza desde un panel, **sin tocar código**.
 
-- ⚡ Llena al instante las coberturas que ya conoce (sin gastar llamadas a IA)
-- 🧠 Aprende: cada respuesta que corriges queda guardada para la próxima vez
-- 🤖 Usa IA (Groq) solo para coberturas nuevas/sin precedente
-- 📄 Te devuelve el **mismo Excel del broker respondido** + una hoja resumen
+> Modelo de negocio sugerido: **$300–$800 de implementación + $99/mes** por empresa cliente.
 
-## Cómo funciona
+## Rutas de la app
 
-1. Subes el archivo del broker (`.xlsx`, `.xls`, `.xlsm`)
-2. La app detecta las hojas de coberturas y la columna donde va tu respuesta
-3. Match híbrido por cada ítem: `Exacta` → `Similar` → `Pendiente`
-4. Botón **Completar con IA** resuelve solo los pendientes (con indicador de confianza)
-5. Buscas/filtras, revisas y editas (todo lo editado se aprende)
-6. Exportas el archivo respondido
+| Ruta | Para quién | Qué hace |
+|---|---|---|
+| `#/` | La aseguradora (prospecto) | Landing B2B de ventas del producto |
+| `#/demo` | La aseguradora (prospecto) | Formulario de solicitud de demo (guarda el lead) |
+| `#/cotizador` | El cliente final | Wizard de cotización en 3 pasos |
+| `#/cotizador?embed=1` | El cliente final | Igual, sin cabecera/pie — para `<iframe>` |
+| `#/historial` | Cliente final / asesor | Cotizaciones anteriores (localStorage) |
+| `#/admin` | La aseguradora | Panel de configuración white-label |
 
-## Instalación
+## Instalación y uso
 
 ```bash
 npm install
-cp .env.example .env   # pon tu GROQ_API_KEY
-npm run dev
+npm run dev       # http://localhost:5173
+npm run build     # build de producción en dist/ (servible desde cualquier carpeta/CDN)
 ```
 
-Abre http://localhost:5173 — el endpoint `/api/quote` corre dentro del mismo `npm run dev`.
+## Estructura de archivos
 
-## Build de producción
-
-```bash
-npm run build
-npm run preview
+```
+src/
+├── main.jsx                    # punto de entrada
+├── App.jsx                     # enrutado por hash + layout (cabecera/pie)
+├── styles.css                  # estilos mobile-first; tema vía variables CSS
+├── config/
+│   └── defaultConfig.js        # ★ configuración white-label por defecto
+├── context/
+│   └── ConfigContext.jsx       # distribuye la config y aplica el tema en vivo
+├── data/
+│   └── catalogos.js            # marcas/modelos, ciudades, licencias de Ecuador
+├── motor/
+│   └── cotizador.js            # ★ motor de cálculo de primas (documentado)
+├── utils/
+│   ├── storage.js              # localStorage: config, historial, leads
+│   └── pdf.js                  # PDF de la cotización con jsPDF
+└── components/
+    ├── Landing.jsx             # landing B2B de ventas
+    ├── DemoForm.jsx            # captura de leads
+    ├── Cotizador.jsx           # wizard de 3 pasos
+    ├── FormVehiculo.jsx        # paso 1
+    ├── FormConductor.jsx       # paso 2
+    ├── Resultados.jsx          # paso 3: los 3 planes + desglose
+    ├── Historial.jsx           # cotizaciones guardadas
+    └── PanelAdmin.jsx          # panel de configuración white-label
 ```
 
-## 🔐 Seguridad (API key)
+## Lógica de cálculo de primas
 
-La clave de Groq vive **solo en el servidor**: el navegador llama a `/api/quote`
-(serverless function en `api/quote.js`) y esa función habla con Groq usando
-`GROQ_API_KEY`. La key nunca se expone al cliente.
+Por cada plan (Básico 3.2% · Estándar 4.3% · Premium 5.6%, configurables):
 
-## ☁️ Despliegue en Vercel
+```
+prima neta = valor asegurado × tasa del plan × Π(factores de riesgo)
+             (con piso de prima mínima, $250 por defecto)
 
-1. Importa el repo en Vercel (detecta Vite automáticamente; `api/quote.js` se
-   publica como Serverless Function).
-2. En **Settings → Environment Variables** agrega:
-   - `GROQ_API_KEY` = tu clave de Groq
-   - `GROQ_MODEL` (opcional) = `llama-3.3-70b-versatile`
-3. Deploy. Listo.
+factores de riesgo (multiplicativos, configurables):
+  edad         <25: ×1.30 · 25–29: ×1.15 · 30–64: ×1.00 · 65+: ×1.20
+  ciudad       Guayaquil ×1.20 · Quito ×1.10 · Durán ×1.25 · Loja ×0.95 …
+  uso          particular ×1.00 · comercial ×1.25 · transporte ×1.45
+  antigüedad   0–3 años ×1.00 · 4–7 ×1.10 · 8–12 ×1.25 · >12 ×1.40
+  siniestros   0: ×0.95 (descuento) · 1: ×1.10 · 2: ×1.30 · 3+: ×1.60
+  licencia     profesional (C/D/E): ×0.95 · no profesional en uso
+               comercial/transporte: ×1.20
 
-## Memoria
+recargos legales de Ecuador (sobre la prima neta):
+  + 3.5%  contribución Superintendencia de Compañías, Valores y Seguros
+  + 0.5%  aporte al Seguro Social Campesino
+  + derechos de emisión (tabla por rango de prima: $0.50 a $9.00)
+  ────────────────
+  = subtotal
+  + 15% IVA
+  ────────────────
+  = PRIMA TOTAL ANUAL (USD)
 
-Las respuestas aprendidas se guardan en `localStorage` del navegador (clave `cotizador_condor_kb_v1`).
-Para una versión multi-usuario o que sincronice entre equipos, conviene moverla a una base de datos.
+cuota mensual = total × 1.05 (recargo de financiamiento) / 12
+```
+
+Cada cotización se "firma" con un número único (`COT-AAAA-XXXXX`) y un código de
+verificación (hash del contenido) que aparece en pantalla y en el PDF.
+
+## Personalización por cliente (white-label)
+
+1. Abre `#/admin` → cambia nombre, eslogan, logo, colores, contacto, registro SCVS,
+   tasas, factores, límites y coberturas. Todo se guarda en `localStorage` y se aplica en vivo.
+2. **Exporta la configuración como JSON** desde el panel para respaldarla o clonarla.
+3. Para entregar el producto pre-configurado: pega el JSON exportado como valores en
+   `src/config/defaultConfig.js` y haz `npm run build`. Un repo, N clientes.
+
+## Embeber en el sitio de la aseguradora
+
+```html
+<iframe src="https://cotizador.suaseguradora.com.ec/#/cotizador?embed=1"
+        style="width:100%;min-height:900px;border:0"
+        title="Cotizador de seguros"></iframe>
+```
+
+## Cumplimiento (Ecuador)
+
+- Moneda: dólares de los EE. UU. (USD), moneda oficial del Ecuador.
+- Desglose con contribución SCVS (3.5%), Seguro Social Campesino (0.5%), derechos de
+  emisión e IVA vigente (15%) — todos editables si la normativa cambia.
+- Tipos de licencia A/B/C/D/E según la Agencia Nacional de Tránsito.
+- El texto legal y el registro ante la Superintendencia de Compañías, Valores y
+  Seguros aparecen en cada cotización y en el PDF. La cotización es referencial; la
+  emisión de la póliza sigue el proceso de suscripción de cada compañía.
 
 ## Stack
 
-React 18 · Vite · SheetJS (xlsx) · Groq API (proxy serverless)
+React 18 · Vite · jsPDF · localStorage — **sin backend ni claves de API**.
+
+## Material de ventas
+
+El guión de 1 página para presentar el producto a aseguradoras está en
+[`docs/GUION_VENTAS_COTIZADOR.md`](docs/GUION_VENTAS_COTIZADOR.md).

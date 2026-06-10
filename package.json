@@ -1,19 +1,18 @@
 {
-  "name": "auto-cotizador-seguros",
+  "name": "auto-cotizador-whitelabel",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Auto-cotizador de seguros para Ramos Generales - llena plantillas del broker con IA y memoria",
+  "description": "Auto Cotizador de seguros vehiculares white-label para aseguradoras de Ecuador - React/Vite, 100% client-side",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@clerk/clerk-react": "^5.61.8",
+    "jspdf": "^4.2.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "xlsx": "^0.18.5"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
