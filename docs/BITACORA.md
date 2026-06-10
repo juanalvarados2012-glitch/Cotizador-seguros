@@ -7,6 +7,25 @@ del proyecto para retomar el trabajo más adelante.
 
 ---
 
+## ✅ Tercera tanda de mejoras gratis — flujo de revisión (2026-06-09)
+
+- **⤵ Siguiente por revisar:** botón en la barra de filtros que salta (en
+  círculo) a la próxima fila marcada en rojo y enfoca su respuesta. Revisar
+  archivos largos se vuelve cuestión de segundos.
+- **↩ Quitar respuestas de IA:** si una corrida de IA llenó mal, este botón
+  quita SOLO lo que puso la IA (las ediciones del usuario se conservan) y deja
+  las filas como pendientes para reintentar. La memoria no se toca.
+- **Búsqueda en todas las hojas:** al escribir en el buscador, cada pestaña de
+  hoja muestra un contador 🔍N con sus coincidencias, sin cambiar de hoja.
+- **Panel de memoria más útil:** muestra cuántas respuestas son criterio propio
+  aprendido del uso (vs. base semilla), ordena por las más utilizadas y marca
+  con ×N las veces que cada respuesta se confirmó.
+- **Excel con autofiltro:** la hoja resumen exportada sale con el autofiltro de
+  Excel activado sobre el detalle (filtrar por hoja, origen o ¿REVISAR?).
+  Verificado con prueba de escritura/lectura.
+
+---
+
 ## ✅ Segunda tanda de mejoras gratis (2026-06-09)
 
 - **Pantalla de error amable (ErrorBoundary):** si algo truena dentro de la app,

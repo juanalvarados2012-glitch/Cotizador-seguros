@@ -265,6 +265,10 @@ const SEED_KB = [
   { cobertura: "Deducible responsabilidad civil", respuesta: "Según tabla de deducibles de la póliza" },
 ].map(k => ({ ...k, count: 1 }));
 
+// Coberturas de la base semilla (normalizadas): sirven para distinguir en el
+// panel de memoria lo que vino "de fábrica" de lo aprendido durante el uso.
+const SEED_SET = new Set(SEED_KB.map(k => normalize(k.cobertura)));
+
 // ─── Colores ──────────────────────────────────────────────────────────────────
 const C = {
   bg: "#0B0F1A", surface: "#131929", border: "#1E2D45", accent: "#1A6FD8",
@@ -1286,6 +1290,40 @@ export default function AutoCotizador() {
     }
   };
 
+  // Quita las respuestas puestas por la IA que el usuario NO editó, por si una
+  // corrida llenó mal y se quiere volver a intentar. La memoria no se toca.
+  const clearAIAnswers = () => {
+    const n = all.filter(c => c.tipo === "IA" && !c.editado).length;
+    if (n === 0) return;
+    if (!window.confirm(L(
+      `Se quitarán ${n} respuestas puestas por la IA (las que editaste tú se conservan). La memoria no cambia. ¿Continuar?`,
+      `${n} AI-generated answers will be removed (your edits are kept). Memory is unchanged. Continue?`))) return;
+    setSheets(prev => {
+      const u = { ...prev };
+      Object.values(u).forEach(({ coverages }) => coverages.forEach(c => {
+        if (c.tipo === "IA" && !c.editado) {
+          c.respuesta = ""; c.tipo = "Pendiente"; c.score = 0; delete c.confianza;
+        }
+      }));
+      return u;
+    });
+    notify("ok", L(`${n} respuestas de IA quitadas. Puedes volver a completar con IA.`,
+      `${n} AI answers removed. You can run AI fill again.`));
+  };
+
+  // Salta (en círculo) a la siguiente fila marcada "por revisar" y enfoca su
+  // respuesta, para repasar lo dudoso sin buscar a ojo entre cientos de filas.
+  const reviewNavRef = useRef(0);
+  const gotoNextReview = () => {
+    const rows = document.querySelectorAll('tr[data-review="1"]');
+    if (rows.length === 0) return;
+    const i = reviewNavRef.current % rows.length;
+    reviewNavRef.current = i + 1;
+    rows[i].scrollIntoView({ behavior: "smooth", block: "center" });
+    const ta = rows[i].querySelector("textarea");
+    if (ta) setTimeout(() => ta.focus({ preventScroll: true }), 350);
+  };
+
   // Copia un resumen de estado listo para pegar en WhatsApp o correo.
   const copySummary = async () => {
     const text = [
@@ -1397,6 +1435,11 @@ export default function AutoCotizador() {
       { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
       { s: { r: 13, c: 0 }, e: { r: 13, c: 4 } },
     ];
+    // Autofiltro de Excel sobre el detalle (fila 15 = encabezados de columna):
+    // permite filtrar por hoja, origen o "¿REVISAR?" directamente en Excel.
+    wsS["!autofilter"] = {
+      ref: XLSX.utils.encode_range({ s: { r: 14, c: 0 }, e: { r: summary.length - 1, c: 4 } }),
+    };
     const SUMMARY_NAME = lang === "en" ? "✓ Answers" : "✓ Respuestas";
     // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
     // si solo se borra de Sheets, book_append_sheet lanza "already exists".
@@ -1666,19 +1709,40 @@ export default function AutoCotizador() {
             <div style={{ overflowY: "auto", padding: "8px 18px 18px" }}>
               {(() => {
                 const nQ = normalize(kbSearch);
-                const list = kb.filter(k => !nQ || normalize(k.cobertura).includes(nQ) || normalize(k.respuesta).includes(nQ));
-                if (list.length === 0) return <div style={{ color: C.muted, fontSize: 12, padding: 24, textAlign: "center" }}>{tr.kbNoMatch}</div>;
-                return list.map(k => (
+                // Aprendidas = entradas que no vienen de la base semilla o que ya
+                // se reutilizaron. Es el "criterio propio" que acumula el cliente.
+                const learnedN = kb.filter(k => (k.count || 1) > 1 || !SEED_SET.has(normalize(k.cobertura))).length;
+                const list = kb
+                  .filter(k => !nQ || normalize(k.cobertura).includes(nQ) || normalize(k.respuesta).includes(nQ))
+                  .sort((a, b) => (b.count || 1) - (a.count || 1) || a.cobertura.localeCompare(b.cobertura));
+                return (
+                  <>
+                    <div style={{ fontSize: 10.5, color: C.muted, padding: "8px 0 4px" }}>
+                      {L(`${learnedN} de ${kb.length} respuestas son criterio propio aprendido del uso · ordenadas por las más utilizadas`,
+                         `${learnedN} of ${kb.length} answers are your own criteria learned from use · sorted by most used`)}
+                    </div>
+                    {list.length === 0 && <div style={{ color: C.muted, fontSize: 12, padding: 24, textAlign: "center" }}>{tr.kbNoMatch}</div>}
+                    {list.map(k => (
                   <div key={normalize(k.cobertura)} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "#B0C0D8", marginBottom: 4 }}>{k.cobertura}</div>
+                      <div style={{ fontSize: 11, color: "#B0C0D8", marginBottom: 4 }}>
+                        {k.cobertura}
+                        {(k.count || 1) > 1 && (
+                          <span title={L("Veces que esta respuesta se ha usado/confirmado", "Times this answer has been used/confirmed")}
+                            style={{ marginLeft: 6, background: "#0F2614", color: C.green, border: "1px solid #1A4020", borderRadius: 4, padding: "0 5px", fontSize: 9, fontWeight: 700 }}>
+                            ×{k.count}
+                          </span>
+                        )}
+                      </div>
                       <input defaultValue={k.respuesta} onBlur={e => { if (e.target.value !== k.respuesta) updateKBEntry(k.cobertura, e.target.value); }}
                         style={{ width: "100%", background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 9px", fontSize: 12, fontFamily: F, outline: "none" }} />
                     </div>
                     <button onClick={() => deleteKBEntry(k.cobertura)} title={tr.kbDeleteTitle}
                       style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A", marginTop: 20 }}>🗑</button>
                   </div>
-                ));
+                    ))}
+                  </>
+                );
               })()}
             </div>
           </div>
@@ -2023,6 +2087,12 @@ export default function AutoCotizador() {
                 title={L("Copia el estado de la cotización para pegarlo en WhatsApp o correo", "Copies the quote status to paste into WhatsApp or email")}>
                 📋 {L("Copiar resumen", "Copy summary")}
               </button>
+              {all.some(c => c.tipo === "IA" && !c.editado) && (
+                <button style={{ ...sx.btnSm, color: C.yellow, padding: "10px 14px" }} onClick={clearAIAnswers}
+                  title={L("Quita lo que llenó la IA (tus ediciones se conservan)", "Removes what the AI filled in (your edits are kept)")}>
+                  ↩ {L("Quitar respuestas de IA", "Remove AI answers")}
+                </button>
+              )}
               <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>{tr.btnOther}</button>
             </div>
 
@@ -2036,6 +2106,10 @@ export default function AutoCotizador() {
             <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
               {Object.entries(sheets).map(([sName, { coverages }]) => {
                 const a = coverages.filter(c => c.respuesta).length, isA = active === sName;
+                // Al buscar, cada pestaña muestra cuántas coincidencias tiene esa
+                // hoja, para encontrar una cobertura sin recorrer hoja por hoja.
+                const nQs = normalize(search);
+                const hits = nQs ? coverages.filter(c => normalize(c.texto).includes(nQs) || normalize(c.respuesta).includes(nQs)).length : 0;
                 return (
                   <button key={sName} onClick={() => setActive(sName)} style={{
                     background: isA ? C.accent : C.surface, border: `1px solid ${isA ? C.accent : C.border}`,
@@ -2044,6 +2118,11 @@ export default function AutoCotizador() {
                   }}>
                     {sName.trim()}
                     <span style={{ background: a === coverages.length ? "#1A4020" : "#2A1A00", color: a === coverages.length ? C.green : C.yellow, borderRadius: 4, padding: "1px 5px", fontSize: 9 }}>{a}/{coverages.length}</span>
+                    {nQs && (
+                      <span style={{ background: hits > 0 ? "#0D2440" : "transparent", color: hits > 0 ? C.accentLight : C.muted, border: `1px solid ${hits > 0 ? "#1A4070" : C.border}`, borderRadius: 4, padding: "1px 5px", fontSize: 9 }}>
+                        🔍{hits}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -2094,6 +2173,13 @@ export default function AutoCotizador() {
                   {fbtn("pendientes", tr.fPending)}
                   {fbtn("respondidas", tr.fAnswered)}
                   {fbtn("revisar", tr.fReview)}
+                  {sheets[active].coverages.some(needsReview) && (
+                    <button onClick={gotoNextReview}
+                      title={L("Salta a la siguiente fila marcada por revisar", "Jumps to the next row flagged for review")}
+                      style={{ ...sx.btnSm, color: C.red, borderColor: "#4A1A1A" }}>
+                      ⤵ {L("Siguiente por revisar", "Next to review")}
+                    </button>
+                  )}
                   <span style={{ fontSize: 11, color: C.muted }}>{tr.rowsOf(rows.length, sheets[active].coverages.length)}</span>
                 </div>
                 <div style={{ overflowX: "auto" }}>
@@ -2108,7 +2194,7 @@ export default function AutoCotizador() {
                       {rows.map(({ c, idx }) => {
                         const review = needsReview(c);
                         return (
-                        <tr key={idx} style={{
+                        <tr key={idx} data-review={review ? "1" : undefined} style={{
                           background: review ? "rgba(231,76,60,.07)" : idx % 2 ? "rgba(255,255,255,.015)" : "transparent",
                           boxShadow: review ? `inset 3px 0 0 ${C.red}` : "none",
                         }}>
