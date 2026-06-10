@@ -3,7 +3,42 @@
 Registro de las decisiones y cambios trabajados en la app. Sirve como memoria
 del proyecto para retomar el trabajo más adelante.
 
-> Última actualización: 2026-06-09
+> Última actualización: 2026-06-10
+
+---
+
+## ✅ Memoria del equipo en la NUBE + Panel de resultados ROI (2026-06-10)
+
+Las dos mejoras que cierran la brecha entre el pitch y el producto:
+
+### ☁ Memoria compartida en la nube (por empresa)
+- La memoria de cada **empresa** (Clerk Organization) ahora se sincroniza entre
+  computadoras vía `/api/kb` (serverless) + Upstash Redis / Vercel KV. La promesa
+  "lo que corrige uno lo aprovechan todos" ya es real entre máquinas distintas.
+- El navegador sigue siendo la copia de trabajo (rápida, offline); la nube es el
+  punto de encuentro. Merge por entrada (`updatedAt`, gana la más reciente) y
+  borrados con lápidas para que no "revivan" desde otra máquina.
+- Seguridad: el token de Clerk se verifica EN el servidor y la empresa sale del
+  token firmado — nadie puede leer/escribir la memoria de otra empresa.
+- Sin base configurada la app degrada con gracia a solo-local (indicador ☁✕).
+- **Configuración (pendiente de hacer en Vercel):** crear Redis en Upstash
+  (gratis) y agregar `KV_REST_API_URL` + `KV_REST_API_TOKEN`. Ver README.
+- Código: `api/kb.js` (servidor), `src/cloudSync.js` (merge + cliente),
+  integración en `App.jsx` (persistKB estampa cambios y los encola; al cargar
+  con empresa activa hace pull+merge+push). El proxy de dev de Vite ahora sirve
+  cualquier `/api/*`.
+
+### 📈 Panel de resultados (ROI)
+- Botón **📈 ROI** en la cabecera: plantillas procesadas, coberturas
+  respondidas, % autollenado, tiempo recuperado y **ahorro estimado en USD**
+  (costo/hora editable, por defecto $9), por mes o histórico.
+- **Reporte de 1 página** (imprimir → guardar como PDF) con estilo claro
+  corporativo, listo para que el campeón interno lo reenvíe a su gerencia: es
+  la munición que justifica el piloto y la licencia.
+- Botón "📋 Copiar resumen" con formato WhatsApp/correo.
+- El historial ahora guarda estadísticas exactas por archivo (auto, IA, por
+  revisar, minutos ahorrados); los archivos viejos se aproximan con lo
+  respondido.
 
 ---
 

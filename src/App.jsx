@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback, Fragment } from "react";
-import { UserButton, OrganizationSwitcher, useUser, useOrganization } from "@clerk/clerk-react";
+import { UserButton, OrganizationSwitcher, useUser, useOrganization, useAuth } from "@clerk/clerk-react";
 import { STR, detectLang, saveLang } from "./i18n";
+// Sincronización de la memoria del equipo en la nube (y normalize compartido).
+import { normalize, stampChanges, mergeRemote, tombsLoad, tombsSave, kbPull, kbPush } from "./cloudSync";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -43,6 +45,7 @@ const kbKey        = () => `cotizador_kb_${SCOPE}`;
 const kbBackupKey  = () => `cotizador_kb_${SCOPE}_backup`;
 const sessionKey   = () => `cotizador_sesion_${SCOPE}`;
 const backupTsKey  = () => `cotizador_kb_backup_ts_${SCOPE}`;
+const tombsKey     = () => `cotizador_kb_tombs_${SCOPE}`; // borrados pendientes de subir (☁)
 
 // Claves antiguas (globales, antes de tener cuentas) — solo para migrar una vez.
 const OLD_KB_KEY = "cotizador_kb_legacy_v1";
@@ -109,6 +112,10 @@ async function histSave(entry) {
     tx.objectStore(HIST_META).put({
       id: entry.id, fileName: entry.fileName, ts: entry.ts,
       total: entry.total, answered: entry.answered, pending: entry.pending,
+      // Estadísticas para el panel de resultados (ROI). Los archivos guardados
+      // antes de esta versión no las traen: el panel las aproxima.
+      auto: entry.auto ?? null, ia: entry.ia ?? null,
+      review: entry.review ?? null, savedMin: entry.savedMin ?? null,
     });
     tx.objectStore(HIST_DATA).put({ id: entry.id, sheets: entry.sheets, bytes: entry.bytes || null });
     tx.oncomplete = () => { db.close(); resolve(); };
@@ -189,6 +196,10 @@ async function migrateOldIdb() {
     oldDb.close();
   }
 }
+
+// Ahorro de tiempo estimado: ~40 s por cobertura resuelta a mano (buscar
+// precedente, redactar y escribir). Se usa en pantalla, en el Excel y en el ROI.
+const SECS_PER_ITEM = 40;
 
 // ¿La respuesta conviene que un humano la revise? (baja confianza, REVISAR, match flojo)
 function needsReview(c) {
@@ -279,14 +290,8 @@ const C = {
 // ─── Normalización + matching ──────────────────────────────────────────────────
 const STOP = new Set(["de","la","el","los","las","y","o","del","en","por","para","un","una","a","con","que","se","su","al","como","es","si","no","aplicable","suma","asegurable","requerida","clausula","cláusula","opcional"]);
 
-function normalize(s) {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// normalize() ahora vive en cloudSync.js (misma l\u00f3gica de siempre): el matching
+// y las claves de sincronizaci\u00f3n deben normalizar id\u00e9ntico, as\u00ed que se comparte.
 // Abreviaturas comunes en slips de seguros (Ecuador): se expanden a sus palabras
 // completas para que "R.C." haga match con "Responsabilidad Civil", etc.
 // Solo siglas inequívocas del ramo, para no crear coincidencias falsas.
@@ -584,6 +589,7 @@ function badge(tipo) {
 export default function AutoCotizador() {
   const { user, isLoaded: userLoaded } = useUser();
   const { organization, membership, isLoaded: orgLoaded } = useOrganization();
+  const { getToken } = useAuth(); // token de sesión: identifica usuario + empresa ante /api/kb
   const userId = user?.id || null;
   // Scope = empresa si hay una activa; si no, la cuenta personal del usuario.
   const orgId = organization?.id || null;
@@ -628,9 +634,22 @@ export default function AutoCotizador() {
   const [histItems, setHistItems] = useState([]);  // lista de archivos guardados
   const [showPriv, setShowPriv] = useState(false); // panel de privacidad
   const [kbBackupTs, setKbBackupTs] = useState(0);
+  // ☁ Sincronización de memoria del equipo: off | sync | ok | error | disabled
+  const [syncInfo, setSyncInfo] = useState({ estado: "off", at: 0 });
+  // 📈 Panel de resultados (ROI): tiempo y dinero recuperados, exportable
+  const [showROI, setShowROI] = useState(false);
+  const [roiPeriod, setRoiPeriod] = useState("mes"); // "mes" | "todo"
+  const [costHora, setCostHora] = useState(() => {
+    try { return Number(localStorage.getItem("cotizador_costo_hora")) || 9; } catch { return 9; }
+  });
   const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
   const kbRef = useRef(SEED_KB);
+  // ☁ refs de sincronización: siempre el token/empresa vigentes, sin re-renders
+  const getTokenRef = useRef(null);
+  const orgIdRef = useRef(null);
+  const syncTimerRef = useRef(null);
+  const pendingSyncRef = useRef({ up: new Map(), del: new Map() });
   const fileRef = useRef();
   const kbFileRef = useRef();
   const backupFileRef = useRef();
@@ -647,6 +666,9 @@ export default function AutoCotizador() {
   const autoRunRef = useRef(false);   // tras subir archivo nuevo en el asistente, llena solo
   const baseFileRef = useRef();
   const assistFileRef = useRef();
+
+  // Mantén el token fresco para las llamadas de sincronización.
+  getTokenRef.current = getToken;
 
   // Responsive: detecta pantallas angostas
   useEffect(() => {
@@ -674,6 +696,11 @@ export default function AutoCotizador() {
   useEffect(() => {
     if (!userLoaded || !orgLoaded) return;
     setScope(scopeId);
+    // ☁ Reinicia la cola de sincronización del scope anterior.
+    orgIdRef.current = orgId;
+    pendingSyncRef.current = { up: new Map(), del: new Map() };
+    clearTimeout(syncTimerRef.current);
+    setSyncInfo({ estado: orgId ? "sync" : "off", at: 0 });
     let cancelled = false;
     (async () => {
       // Reinicia el estado visible antes de cargar el del scope nuevo (al
@@ -712,6 +739,29 @@ export default function AutoCotizador() {
         }
       } catch { /* primera vez o sin storage */ }
       if (!cancelled) setKbReady(true);
+
+      // ── ☁ Memoria del equipo en la nube (solo con empresa activa) ──
+      // Baja lo que el equipo aprendió desde otras máquinas, lo fusiona con lo
+      // local (gana la versión más reciente por entrada) y sube lo que falte.
+      if (orgId) {
+        try {
+          const token = await getTokenRef.current?.();
+          const r = await kbPull(token);
+          if (!cancelled) {
+            if (r && r.disabled) {
+              setSyncInfo({ estado: "disabled", at: Date.now() });
+            } else {
+              const { merged, upserts, deletes } =
+                mergeRemote(kbRef.current, tombsLoad(tombsKey()), (r && r.entries) || {});
+              await persistKB(merged, { fromSync: true });
+              if (upserts.length || deletes.length) queueSync(upserts, deletes);
+              setSyncInfo({ estado: "ok", at: Date.now() });
+            }
+          }
+        } catch {
+          if (!cancelled) setSyncInfo({ estado: "error", at: Date.now() });
+        }
+      }
 
       // ── Recuperar sesión anterior del usuario ──
       try {
@@ -774,11 +824,17 @@ export default function AutoCotizador() {
       const cov = Object.values(sh).flatMap(s => s.coverages);
       const totalC = cov.length;
       const ans = cov.filter(c => c.respuesta).length;
+      // Estadísticas exactas para el panel de resultados (ROI).
+      const autoC = cov.filter(c => ["Exacta", "Similar", "IA", "Aprendida"].includes(c.tipo) && c.respuesta).length;
+      const iaC = cov.filter(c => c.tipo === "IA" && c.respuesta).length;
+      const revC = cov.filter(needsReview).length;
       let bytes = sessionBytesRef.current;
       if (!bytes) { const rec = await idbGet().catch(() => null); bytes = rec && rec.bytes; }
       await histSave({
         id: name, fileName: name, ts: Date.now(),
         total: totalC, answered: ans, pending: totalC - ans,
+        auto: autoC, ia: iaC, review: revC,
+        savedMin: Math.round((autoC * SECS_PER_ITEM) / 60),
         sheets: sh, bytes: bytes || null,
       });
       refreshHist();
@@ -815,14 +871,60 @@ export default function AutoCotizador() {
     notify("info", tr.msgHistRemoved);
   }, [refreshHist, notify, tr]);
 
-  const persistKB = useCallback(async (newKb) => {
-    kbRef.current = newKb; setKb(newKb);
+  // ── ☁ Sincronización de memoria del equipo ────────────────────────────────
+  // Sube los cambios encolados en UNA llamada, 2.5 s después del último cambio.
+  // Si falla, los re-encola y reintenta con el próximo cambio (la copia local
+  // nunca se pierde: el navegador sigue siendo la fuente de trabajo).
+  const flushSync = useCallback(async () => {
+    const p = pendingSyncRef.current;
+    if (!orgIdRef.current || (p.up.size === 0 && p.del.size === 0)) return;
+    const upserts = [...p.up.values()];
+    const deletes = [...p.del.values()];
+    pendingSyncRef.current = { up: new Map(), del: new Map() };
     try {
-      await storage.set(kbKey(), JSON.stringify(newKb));
-      // Respaldo automático rolling (protege ante corrupción accidental).
-      localStorage.setItem(kbBackupKey(), JSON.stringify({ ts: Date.now(), kb: newKb }));
-    } catch {}
+      setSyncInfo(s => ({ ...s, estado: "sync" }));
+      const token = await getTokenRef.current?.();
+      const r = await kbPush(token, upserts, deletes);
+      if (r && r.disabled) { setSyncInfo({ estado: "disabled", at: Date.now() }); return; }
+      setSyncInfo({ estado: "ok", at: Date.now() });
+    } catch {
+      const q = pendingSyncRef.current; // re-encolar sin pisar cambios más nuevos
+      upserts.forEach(u => { const k = normalize(u.cobertura); if (!q.up.has(k)) q.up.set(k, u); });
+      deletes.forEach(d => { if (!q.del.has(d.key)) q.del.set(d.key, d); });
+      setSyncInfo({ estado: "error", at: Date.now() });
+    }
   }, []);
+
+  const queueSync = useCallback((upserts, deletes) => {
+    if (!orgIdRef.current) return;
+    const p = pendingSyncRef.current;
+    upserts.forEach(u => p.up.set(normalize(u.cobertura), u));
+    deletes.forEach(d => { p.del.set(d.key, d); p.up.delete(d.key); });
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(flushSync, 2500);
+  }, [flushSync]);
+
+  const persistKB = useCallback(async (newKb, opts = {}) => {
+    let toStore = newKb;
+    // En modo empresa: detecta qué cambió, lo estampa con updatedAt y lo encola
+    // a la nube. Lo que LLEGA de la nube entra con fromSync para no rebotar.
+    if (!opts.fromSync && orgIdRef.current) {
+      const { stamped, upserts, deletes } = stampChanges(kbRef.current, newKb);
+      toStore = stamped;
+      if (deletes.length) {
+        const tombs = tombsLoad(tombsKey());
+        deletes.forEach(d => { tombs[d.key] = d.updatedAt; });
+        tombsSave(tombsKey(), tombs);
+      }
+      if (upserts.length || deletes.length) queueSync(upserts, deletes);
+    }
+    kbRef.current = toStore; setKb(toStore);
+    try {
+      await storage.set(kbKey(), JSON.stringify(toStore));
+      // Respaldo automático rolling (protege ante corrupción accidental).
+      localStorage.setItem(kbBackupKey(), JSON.stringify({ ts: Date.now(), kb: toStore }));
+    } catch {}
+  }, [queueSync]);
 
   // Aprender una respuesta
   const learn = useCallback((texto, respuesta) => {
@@ -1484,13 +1586,128 @@ export default function AutoCotizador() {
   const pend = all.filter(c => c.tipo === "Pendiente" || !c.respuesta).length;
   const revisar = all.filter(needsReview).length;
   const pct = total ? Math.round((answered / total) * 100) : 0;
-  // Ahorro de tiempo estimado: ~40 s por cobertura resuelta a mano (buscar
-  // precedente, redactar y escribir). Solo cuenta lo que la app llenó sola.
-  const SECS_PER_ITEM = 40;
+  // Solo cuenta lo que la app llenó sola (constante SECS_PER_ITEM, arriba).
   const savedMin = Math.round((auto * SECS_PER_ITEM) / 60);
   const savedLabel = savedMin >= 60
     ? `${Math.floor(savedMin / 60)} h ${savedMin % 60} min`
     : `${savedMin} min`;
+
+  // ── 📈 Resultados (ROI): agregado del historial de archivos ────────────────
+  // El campeón interno usa estas cifras para justificar la compra ante su
+  // gerencia: archivos procesados, % autollenado y horas/dólares recuperados.
+  const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`);
+  const roiItems = (roiPeriod === "mes"
+    ? histItems.filter(h => {
+        const d = new Date(h.ts || 0), n = new Date();
+        return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
+      })
+    : histItems
+  ).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const roi = roiItems.reduce((acc, h) => {
+    // Archivos guardados antes de esta versión no traen `auto`: se aproxima
+    // con lo respondido (en la práctica casi todo lo respondió la app).
+    const autoH = h.auto ?? h.answered ?? 0;
+    acc.archivos += 1;
+    acc.items += h.total || 0;
+    acc.respondidas += h.answered || 0;
+    acc.auto += autoH;
+    acc.minutos += h.savedMin ?? Math.round((autoH * SECS_PER_ITEM) / 60);
+    return acc;
+  }, { archivos: 0, items: 0, respondidas: 0, auto: 0, minutos: 0 });
+  const roiPct = roi.items ? Math.round((roi.auto / roi.items) * 100) : 0;
+  const roiDinero = (roi.minutos / 60) * (costHora || 0);
+  const roiPeriodLabel = roiPeriod === "mes"
+    ? new Date().toLocaleDateString(lang === "en" ? "en-US" : "es-EC", { month: "long", year: "numeric" })
+    : L("Histórico completo", "All time");
+  const roiOwner = organization?.name || user?.fullName || userEmail || "";
+
+  const saveCostHora = (v) => {
+    const n = Math.max(0, Number(v) || 0);
+    setCostHora(n);
+    try { localStorage.setItem("cotizador_costo_hora", String(n)); } catch {}
+  };
+
+  // Reporte de UNA página, listo para imprimir o guardar como PDF y reenviar
+  // a la gerencia. Se abre en una ventana limpia con estilo claro corporativo.
+  const printROI = () => {
+    const rows = roiItems.map(h => {
+      const autoH = h.auto ?? h.answered ?? 0;
+      const minH = h.savedMin ?? Math.round((autoH * SECS_PER_ITEM) / 60);
+      const pctH = h.total ? Math.round((autoH / h.total) * 100) : 0;
+      return `<tr><td>${new Date(h.ts || 0).toLocaleDateString()}</td><td>${String(h.fileName || "").replace(/</g, "&lt;")}</td><td style="text-align:right">${h.total || 0}</td><td style="text-align:right">${pctH}%</td><td style="text-align:right">${fmtMin(minH)}</td></tr>`;
+    }).join("");
+    const t = (es, en) => (lang === "en" ? en : es);
+    const html = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
+<title>${t("Reporte de resultados", "Results report")} · Auto-Cotizador</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;color:#1a2433;margin:36px;font-size:13px}
+  h1{font-size:20px;margin:0 0 2px} .sub{color:#5a6b85;margin:0 0 22px;font-size:12px}
+  .grid{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+  .card{flex:1;min-width:130px;border:1px solid #d8e0ec;border-radius:8px;padding:12px 14px}
+  .card b{display:block;font-size:21px;margin-bottom:2px;color:#0f3d6e}
+  .card span{font-size:10.5px;color:#5a6b85;text-transform:uppercase;letter-spacing:.6px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{Text-align:left;background:#f2f5fa;color:#33415c;padding:7px 9px;border-bottom:2px solid #d8e0ec}
+  th:nth-child(n+3){text-align:right}
+  td{padding:6px 9px;border-bottom:1px solid #e8edf4}
+  .foot{margin-top:22px;color:#7a8aa3;font-size:10.5px;line-height:1.6}
+  @media print{body{margin:14mm}}
+</style></head><body>
+<h1>${t("Reporte de resultados — Auto-Cotizador", "Results report — Auto-Cotizador")}</h1>
+<p class="sub">${roiOwner ? roiOwner + " · " : ""}${t("Período", "Period")}: ${roiPeriodLabel} · ${t("Generado", "Generated")}: ${new Date().toLocaleString()}</p>
+<div class="grid">
+  <div class="card"><b>${roi.archivos}</b><span>${t("Plantillas procesadas", "Templates processed")}</span></div>
+  <div class="card"><b>${roi.respondidas}</b><span>${t("Coberturas respondidas", "Coverages answered")}</span></div>
+  <div class="card"><b>${roiPct}%</b><span>${t("Autollenado", "Auto-filled")}</span></div>
+  <div class="card"><b>${fmtMin(roi.minutos)}</b><span>${t("Tiempo recuperado", "Time recovered")}</span></div>
+  <div class="card"><b>$${roiDinero.toFixed(0)}</b><span>${t("Ahorro estimado (USD)", "Estimated savings (USD)")}</span></div>
+</div>
+<table><thead><tr>
+  <th>${t("Fecha", "Date")}</th><th>${t("Archivo", "File")}</th><th>${t("Ítems", "Items")}</th><th>${t("Autollenado", "Auto-filled")}</th><th>${t("Tiempo recuperado", "Time recovered")}</th>
+</tr></thead><tbody>${rows || `<tr><td colspan="5">${t("Sin archivos en el período.", "No files in this period.")}</td></tr>`}</tbody></table>
+<p class="foot">${t(
+      `Supuestos: ~${SECS_PER_ITEM} segundos por cobertura resuelta a mano (buscar precedente, redactar y escribir) y costo de $${costHora}/hora por suscriptor (editable en la app). El ahorro solo cuenta las coberturas que la herramienta llenó automáticamente con memoria o IA.`,
+      `Assumptions: ~${SECS_PER_ITEM} seconds per coverage answered by hand (find precedent, draft and type) and $${costHora}/hour per underwriter (editable in the app). Savings only count coverages the tool filled automatically using memory or AI.`
+    )}</p>
+</body></html>`;
+    const w = window.open("", "_blank", "width=860,height=900");
+    if (!w) { notify("error", L("El navegador bloqueó la ventana del reporte. Permite las ventanas emergentes.", "The browser blocked the report window. Allow pop-ups.")); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch { /* el usuario imprime a mano */ } }, 400);
+  };
+
+  // Resumen del ROI listo para pegar en WhatsApp o correo.
+  const copyROI = async () => {
+    const text = [
+      L(`*Resultados Auto-Cotizador — ${roiPeriodLabel}*`, `*Auto-Cotizador results — ${roiPeriodLabel}*`),
+      L(`📄 Plantillas procesadas: ${roi.archivos}`, `📄 Templates processed: ${roi.archivos}`),
+      L(`✅ Coberturas respondidas: ${roi.respondidas} (autollenado ${roiPct}%)`, `✅ Coverages answered: ${roi.respondidas} (${roiPct}% auto-filled)`),
+      L(`⏱ Tiempo recuperado: ${fmtMin(roi.minutos)}`, `⏱ Time recovered: ${fmtMin(roi.minutos)}`),
+      L(`💵 Ahorro estimado: $${roiDinero.toFixed(0)} USD (a $${costHora}/h)`, `💵 Estimated savings: $${roiDinero.toFixed(0)} USD (at $${costHora}/h)`),
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("ok", L("Resumen de resultados copiado.", "Results summary copied."));
+    } catch {
+      notify("error", L("No se pudo copiar al portapapeles.", "Couldn't copy to clipboard."));
+    }
+  };
+
+  // ── ☁ Indicador del estado de sincronización (junto a la memoria) ──────────
+  const syncGlyph = (() => {
+    if (!isCompany) return null;
+    const map = {
+      ok: ["☁✓", C.green, L("Memoria sincronizada con tu equipo", "Memory synced with your team")],
+      sync: ["☁…", C.accentLight, L("Sincronizando con tu equipo…", "Syncing with your team…")],
+      error: ["☁!", C.red, L("Error de sincronización: se reintenta con el próximo cambio", "Sync error: will retry on next change")],
+      disabled: ["☁✕", C.yellow, L("Nube no configurada: la memoria vive solo en este navegador", "Cloud not configured: memory lives only in this browser")],
+    };
+    const item = map[syncInfo.estado];
+    if (!item) return null;
+    return <span title={item[2]} style={{ marginLeft: 5, color: item[1], fontSize: 11 }}>{item[0]}</span>;
+  })();
 
   // En el asistente, al terminar de cargar el archivo nuevo (step="review"),
   // dispara la IA una sola vez para que "se llene solo".
@@ -1539,7 +1756,13 @@ export default function AutoCotizador() {
             title={isCompany ? tr.memTitleTeam(organization?.name) : tr.memTitlePersonal}
             style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
             <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{isCompany ? tr.hdrMemoryTeam : tr.hdrMemory}</div>
-            <div style={{ fontSize: 13, color: C.green }}>{isCompany ? "👥" : "🧠"} {tr.answersN(kb.length)}</div>
+            <div style={{ fontSize: 13, color: C.green }}>{isCompany ? "👥" : "🧠"} {tr.answersN(kb.length)}{syncGlyph}</div>
+          </button>
+          <button onClick={() => { refreshHist(); setShowROI(true); }}
+            title={L("Resultados: tiempo y dinero recuperados, con reporte para tu gerencia", "Results: time and money recovered, with a report for your management")}
+            style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer", textAlign: "right", fontFamily: F }}>
+            <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>{L("RESULTADOS", "RESULTS")}</div>
+            <div style={{ fontSize: 13, color: C.gold }}>📈 ROI</div>
           </button>
           {fileName && step === "review" && (
             <div style={{ textAlign: "right" }}>
@@ -1677,6 +1900,23 @@ export default function AutoCotizador() {
               <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>{tr.kbTitle(kb.length)}</span>
               <button onClick={() => setShowKB(false)} style={{ ...sx.btnSm, fontSize: 14 }}>✕</button>
             </div>
+            {isCompany && (
+              <div style={{
+                padding: "9px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 11, lineHeight: 1.55,
+                color: syncInfo.estado === "ok" ? C.green : syncInfo.estado === "error" ? C.red : syncInfo.estado === "disabled" ? C.yellow : C.muted,
+              }}>
+                {syncInfo.estado === "ok" && L(
+                  `☁ Memoria compartida con todo el equipo de ${organization?.name} — lo que corrige uno lo aprovechan todos, en cualquier computadora. Última sincronización: ${syncInfo.at ? new Date(syncInfo.at).toLocaleTimeString() : "—"}.`,
+                  `☁ Memory shared with the whole ${organization?.name} team — what one person corrects, everyone gets, on any computer. Last sync: ${syncInfo.at ? new Date(syncInfo.at).toLocaleTimeString() : "—"}.`)}
+                {syncInfo.estado === "sync" && L("☁ Sincronizando la memoria del equipo…", "☁ Syncing team memory…")}
+                {syncInfo.estado === "error" && L(
+                  "☁ No se pudo sincronizar (¿sin internet?). Tus cambios están guardados en este navegador y se reintentará automáticamente.",
+                  "☁ Couldn't sync (offline?). Your changes are saved in this browser and will retry automatically.")}
+                {syncInfo.estado === "disabled" && L(
+                  "☁ La nube del equipo no está configurada: la memoria vive solo en este navegador. El administrador debe crear la base de datos (ver README → Memoria compartida).",
+                  "☁ Team cloud isn't configured: memory lives only in this browser. The admin must create the database (see README → Shared memory).")}
+              </div>
+            )}
             <div style={{ padding: "12px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <input value={kbSearch} onChange={e => setKbSearch(e.target.value)} placeholder={tr.kbSearch}
                 style={{ flex: 1, minWidth: 160, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "7px 11px", fontSize: 12, fontFamily: F, outline: "none" }} />
@@ -1744,6 +1984,110 @@ export default function AutoCotizador() {
                   </>
                 );
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 📈 Panel de resultados (ROI): el argumento de compra en cifras ─── */}
+      {showROI && (
+        <div onClick={() => setShowROI(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 780, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>
+                📈 {L("Resultados (ROI)", "Results (ROI)")}{roiOwner ? ` · ${roiOwner}` : ""}
+              </span>
+              <button onClick={() => setShowROI(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
+            </div>
+
+            <div style={{ padding: "11px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {[["mes", L("Este mes", "This month")], ["todo", L("Histórico", "All time")]].map(([key, label]) => (
+                <button key={key} onClick={() => setRoiPeriod(key)} style={{
+                  background: roiPeriod === key ? C.accent : "transparent",
+                  color: roiPeriod === key ? "#fff" : C.muted,
+                  border: `1px solid ${roiPeriod === key ? C.accent : C.border}`,
+                  borderRadius: 6, padding: "5px 11px", cursor: "pointer", fontSize: 11, fontFamily: F,
+                }}>{label}</button>
+              ))}
+              <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}
+                title={L("Costo por hora de un suscriptor: se usa para estimar el ahorro en dólares", "Underwriter hourly cost: used to estimate savings in dollars")}>
+                💵 {L("Costo/hora (USD):", "Cost/hour (USD):")}
+              </span>
+              <input type="number" min="0" step="0.5" value={costHora}
+                onChange={e => saveCostHora(e.target.value)}
+                style={{ width: 72, background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 9px", fontSize: 12, fontFamily: F, outline: "none" }} />
+            </div>
+
+            <div style={{ padding: "14px 18px", overflowY: "auto" }}>
+              <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr 1fr" : "repeat(5, 1fr)", gap: 10, marginBottom: 14 }}>
+                {[
+                  [String(roi.archivos), L("Plantillas procesadas", "Templates processed"), C.accentLight],
+                  [String(roi.respondidas), L("Coberturas respondidas", "Coverages answered"), C.text],
+                  [`${roiPct}%`, L("Autollenado", "Auto-filled"), C.gold],
+                  [fmtMin(roi.minutos), L("Tiempo recuperado", "Time recovered"), C.green],
+                  [`$${roiDinero.toFixed(0)}`, L("Ahorro estimado", "Estimated savings"), C.green],
+                ].map(([big, small, col], i) => (
+                  <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: col, marginBottom: 3, letterSpacing: -0.5 }}>{big}</div>
+                    <div style={{ fontSize: 9.5, color: C.muted, letterSpacing: 0.8, textTransform: "uppercase", lineHeight: 1.4 }}>{small}</div>
+                  </div>
+                ))}
+              </div>
+
+              {roiItems.length === 0 ? (
+                <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: 28, lineHeight: 1.6 }}>
+                  {L("Sin archivos en este período. Procesa una plantilla y vuelve: aquí se acumula el argumento de compra.",
+                     "No files in this period. Process a template and come back: this is where the business case builds up.")}
+                </div>
+              ) : (
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                      <thead><tr>
+                        <th style={{ ...sx.th, position: "static" }}>{L("Fecha", "Date")}</th>
+                        <th style={{ ...sx.th, position: "static" }}>{L("Archivo", "File")}</th>
+                        <th style={{ ...sx.th, position: "static", textAlign: "right" }}>{L("Ítems", "Items")}</th>
+                        <th style={{ ...sx.th, position: "static", textAlign: "right" }}>{L("Autollenado", "Auto-filled")}</th>
+                        <th style={{ ...sx.th, position: "static", textAlign: "right" }}>{L("Tiempo recuperado", "Time recovered")}</th>
+                      </tr></thead>
+                      <tbody>
+                        {roiItems.map(h => {
+                          const autoH = h.auto ?? h.answered ?? 0;
+                          const minH = h.savedMin ?? Math.round((autoH * SECS_PER_ITEM) / 60);
+                          const pctH = h.total ? Math.round((autoH / h.total) * 100) : 0;
+                          return (
+                            <tr key={h.id}>
+                              <td style={{ ...sx.td, color: C.muted, whiteSpace: "nowrap" }}>{new Date(h.ts || 0).toLocaleDateString()}</td>
+                              <td style={{ ...sx.td, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.fileName}</td>
+                              <td style={{ ...sx.td, textAlign: "right" }}>{h.total || 0}</td>
+                              <td style={{ ...sx.td, textAlign: "right", color: pctH >= 70 ? C.green : C.yellow }}>{pctH}%</td>
+                              <td style={{ ...sx.td, textAlign: "right", color: C.green }}>{fmtMin(minH)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.6, marginTop: 12 }}>
+                {L(`Supuestos: ~${SECS_PER_ITEM} s por cobertura resuelta a mano y $${costHora}/hora por suscriptor (editable arriba). Solo cuenta lo que la app llenó sola con memoria o IA.`,
+                   `Assumptions: ~${SECS_PER_ITEM}s per coverage answered by hand and $${costHora}/hour per underwriter (editable above). Only counts what the app filled automatically with memory or AI.`)}
+              </div>
+            </div>
+
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button style={{ ...sx.btnGold, padding: "9px 16px" }} onClick={printROI}>
+                🖨 {L("Exportar reporte (1 página)", "Export report (1 page)")}
+              </button>
+              <button style={sx.btnSm} onClick={copyROI}>📋 {L("Copiar resumen", "Copy summary")}</button>
+              <span style={{ fontSize: 10.5, color: C.muted, flex: 1, minWidth: 180, lineHeight: 1.5 }}>
+                {L("Imprime o guarda como PDF y reenvíalo a tu gerencia: estas cifras justifican la herramienta.",
+                   "Print or save as PDF and forward it to management: these numbers justify the tool.")}
+              </span>
             </div>
           </div>
         </div>

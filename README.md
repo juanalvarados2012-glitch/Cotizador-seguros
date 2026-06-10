@@ -50,9 +50,34 @@ La clave de Groq vive **solo en el servidor**: el navegador llama a `/api/quote`
 
 ## Memoria
 
-Las respuestas aprendidas se guardan en `localStorage` del navegador (clave `cotizador_condor_kb_v1`).
-Para una versión multi-usuario o que sincronice entre equipos, conviene moverla a una base de datos.
+Las respuestas aprendidas se guardan en el navegador (localStorage) por usuario o
+por empresa (Clerk Organization). El navegador es siempre la copia de trabajo:
+rápida y disponible sin internet.
+
+### ☁️ Memoria compartida del equipo (nube)
+
+Con una base Redis configurada, la memoria de cada **empresa** se sincroniza
+automáticamente entre todas las computadoras del equipo: lo que corrige un
+suscriptor lo aprovechan todos. Cómo activarla:
+
+1. Crea una base gratis en [Upstash](https://console.upstash.com) (o instala
+   **Upstash for Redis** desde el Marketplace de Vercel, que crea las variables solo).
+2. Agrega en Vercel (y en tu `.env` local):
+   - `KV_REST_API_URL` + `KV_REST_API_TOKEN` (o `UPSTASH_REDIS_REST_URL`/`_TOKEN`)
+3. Redeploy. El panel de Memoria mostrará "☁ Memoria compartida con todo el equipo".
+
+Detalles: la sincronización es por entrada (gana la edición más reciente), los
+borrados se propagan con lápidas, y el servidor verifica el token de Clerk — la
+empresa sale del token firmado, nunca de un parámetro del cliente. Sin las
+variables, la app funciona igual pero solo-local (el indicador muestra ☁✕).
+
+## 📈 Resultados (ROI)
+
+El botón **📈 ROI** de la cabecera muestra, por mes o histórico: plantillas
+procesadas, % de autollenado, tiempo recuperado y ahorro estimado en dólares
+(costo/hora editable). Incluye **reporte de 1 página** listo para imprimir o
+guardar como PDF y reenviar a gerencia — es el argumento de compra del piloto.
 
 ## Stack
 
-React 18 · Vite · SheetJS (xlsx) · Groq API (proxy serverless)
+React 18 · Vite · SheetJS (xlsx) · Groq API (proxy serverless) · Clerk · Upstash Redis (opcional)
