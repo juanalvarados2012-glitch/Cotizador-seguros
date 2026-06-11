@@ -21,8 +21,12 @@ Las dos mejoras que cierran la brecha entre el pitch y el producto:
 - Seguridad: el token de Clerk se verifica EN el servidor y la empresa sale del
   token firmado — nadie puede leer/escribir la memoria de otra empresa.
 - Sin base configurada la app degrada con gracia a solo-local (indicador ☁✕).
-- **Configuración (pendiente de hacer en Vercel):** crear Redis en Upstash
-  (gratis) y agregar `KV_REST_API_URL` + `KV_REST_API_TOKEN`. Ver README.
+- **Configuración HECHA y verificada en producción (2026-06-11):** Upstash
+  conectado desde el Marketplace de Vercel + `CLERK_SECRET_KEY` corregida
+  (la anterior se había copiado enmascarada con "•••"). Organizations
+  habilitado en Clerk y equipo creado. El panel de Memoria muestra
+  "☁ Memoria compartida con todo el equipo" en verde. ⚠️ Pendiente menor:
+  rotar la CLERK_SECRET_KEY (se compartió por chat durante el diagnóstico).
 - Código: `api/kb.js` (servidor), `src/cloudSync.js` (merge + cliente),
   integración en `App.jsx` (persistKB estampa cambios y los encola; al cargar
   con empresa activa hace pull+merge+push). El proxy de dev de Vite ahora sirve
