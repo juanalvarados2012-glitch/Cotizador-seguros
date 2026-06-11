@@ -758,8 +758,8 @@ export default function AutoCotizador() {
               setSyncInfo({ estado: "ok", at: Date.now() });
             }
           }
-        } catch {
-          if (!cancelled) setSyncInfo({ estado: "error", at: Date.now() });
+        } catch (e) {
+          if (!cancelled) setSyncInfo({ estado: "error", at: Date.now(), detalle: String(e?.message || e) });
         }
       }
 
@@ -887,11 +887,11 @@ export default function AutoCotizador() {
       const r = await kbPush(token, upserts, deletes);
       if (r && r.disabled) { setSyncInfo({ estado: "disabled", at: Date.now() }); return; }
       setSyncInfo({ estado: "ok", at: Date.now() });
-    } catch {
+    } catch (e) {
       const q = pendingSyncRef.current; // re-encolar sin pisar cambios más nuevos
       upserts.forEach(u => { const k = normalize(u.cobertura); if (!q.up.has(k)) q.up.set(k, u); });
       deletes.forEach(d => { if (!q.del.has(d.key)) q.del.set(d.key, d); });
-      setSyncInfo({ estado: "error", at: Date.now() });
+      setSyncInfo({ estado: "error", at: Date.now(), detalle: String(e?.message || e) });
     }
   }, []);
 
@@ -1909,9 +1909,17 @@ export default function AutoCotizador() {
                   `☁ Memoria compartida con todo el equipo de ${organization?.name} — lo que corrige uno lo aprovechan todos, en cualquier computadora. Última sincronización: ${syncInfo.at ? new Date(syncInfo.at).toLocaleTimeString() : "—"}.`,
                   `☁ Memory shared with the whole ${organization?.name} team — what one person corrects, everyone gets, on any computer. Last sync: ${syncInfo.at ? new Date(syncInfo.at).toLocaleTimeString() : "—"}.`)}
                 {syncInfo.estado === "sync" && L("☁ Sincronizando la memoria del equipo…", "☁ Syncing team memory…")}
-                {syncInfo.estado === "error" && L(
-                  "☁ No se pudo sincronizar (¿sin internet?). Tus cambios están guardados en este navegador y se reintentará automáticamente.",
-                  "☁ Couldn't sync (offline?). Your changes are saved in this browser and will retry automatically.")}
+                {syncInfo.estado === "error" && (
+                  <>
+                    {L("☁ No se pudo sincronizar. Tus cambios están guardados en este navegador y se reintentará automáticamente.",
+                       "☁ Couldn't sync. Your changes are saved in this browser and will retry automatically.")}
+                    {syncInfo.detalle && (
+                      <div style={{ marginTop: 4, color: C.muted, fontSize: 10 }}>
+                        {L("Detalle técnico: ", "Technical detail: ")}{syncInfo.detalle}
+                      </div>
+                    )}
+                  </>
+                )}
                 {syncInfo.estado === "disabled" && L(
                   "☁ La nube del equipo no está configurada: la memoria vive solo en este navegador. El administrador debe crear la base de datos (ver README → Memoria compartida).",
                   "☁ Team cloud isn't configured: memory lives only in this browser. The admin must create the database (see README → Shared memory).")}

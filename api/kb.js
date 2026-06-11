@@ -126,8 +126,13 @@ export default async function handler(req, res) {
   let auth = null;
   try {
     auth = await authOrg(req);
-  } catch {
-    return res.status(401).json({ error: "Token de sesión inválido o vencido." });
+  } catch (e) {
+    // Incluye el motivo de Clerk (firma inválida, token vencido, instancia
+    // equivocada…) para poder diagnosticar desde la app sin adivinar.
+    return res.status(401).json({
+      error: `Token de sesión inválido: ${String(e?.message || e).slice(0, 200)}. ` +
+        "Verifica que CLERK_SECRET_KEY sea de la MISMA instancia de Clerk (test/live) que la clave pública.",
+    });
   }
   if (!auth) {
     return res.status(401).json({ error: "Se requiere una sesión con empresa activa." });

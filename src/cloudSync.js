@@ -125,11 +125,18 @@ export function tombsSave(storageKey, map) {
 // ─── Llamadas al servidor ─────────────────────────────────────────────────────
 // El token de sesión de Clerk identifica al usuario Y a su empresa: el servidor
 // lo verifica y decide el scope. El cliente nunca elige qué memoria leer.
+// Si el servidor rechaza, el error incluye el detalle para mostrarlo en la UI.
+async function lanzarConDetalle(res, etiqueta) {
+  let detalle = "";
+  try { const j = await res.json(); detalle = j.error || ""; } catch { /* sin cuerpo */ }
+  throw new Error(`${etiqueta} ${res.status}${detalle ? `: ${detalle}` : ""}`);
+}
+
 export async function kbPull(token) {
   const res = await fetch("/api/kb", {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new Error(`Sync GET ${res.status}`);
+  if (!res.ok) await lanzarConDetalle(res, "Sync GET");
   return res.json(); // { disabled:true } | { entries: {...} }
 }
 
@@ -139,6 +146,6 @@ export async function kbPush(token, upserts, deletes) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ upserts, deletes }),
   });
-  if (!res.ok) throw new Error(`Sync POST ${res.status}`);
+  if (!res.ok) await lanzarConDetalle(res, "Sync POST");
   return res.json(); // { disabled:true } | { ok:true }
 }
