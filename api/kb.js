@@ -111,7 +111,16 @@ export default async function handler(req, res) {
   const kv = kvEnv();
   if (!kv || !process.env.CLERK_SECRET_KEY) {
     // Sin base de datos configurada: la app trabaja solo-local sin error.
-    return res.status(200).json({ disabled: true });
+    // `check` dice qué pieza falta (true = la variable SÍ está) para poder
+    // diagnosticar desde el navegador sin exponer ningún secreto.
+    return res.status(200).json({
+      disabled: true,
+      check: {
+        kv_url: !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL),
+        kv_token: !!(process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN),
+        clerk_secret: !!process.env.CLERK_SECRET_KEY,
+      },
+    });
   }
 
   let auth = null;
