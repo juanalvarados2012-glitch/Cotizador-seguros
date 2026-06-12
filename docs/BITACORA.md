@@ -3,7 +3,33 @@
 Registro de las decisiones y cambios trabajados en la app. Sirve como memoria
 del proyecto para retomar el trabajo más adelante.
 
-> Última actualización: 2026-06-10
+> Última actualización: 2026-06-12
+
+---
+
+## ✅ Exportación de alta fidelidad — conserva el formato del Excel del broker (2026-06-12)
+
+Antes, al exportar, la app **regeneraba** el Excel con `xlsx` (community), que
+NO escribe estilos de celda: se perdían colores, bordes y fuentes (y por eso un
+intento anterior de leer estilos corrompía el archivo). Se probó el fork
+`xlsx-js-style` y **tampoco preserva** el formato de un archivo que ya viene con
+estilos indexados (en una prueba, de 5 rellenos de color quedaban 2).
+
+Solución nueva (`src/xlsxExport.js`): en vez de regenerar, se **edita
+quirúrgicamente** el .xlsx original (que es un ZIP de XML) con `fflate`. Solo se
+tocan las celdas de respuesta dentro del XML de cada hoja; todo lo demás queda
+byte a byte igual → se conservan **colores, bordes, fuentes, celdas combinadas y
+fórmulas**. La hoja resumen "✓ Respuestas" se agrega registrándola en
+`workbook.xml`, sus rels y `[Content_Types].xml`. Probado en Node: estilos
+intactos, respuestas escritas, inserción de celdas/filas nuevas, escape de
+caracteres (`&`, `<`) y reapertura limpia.
+
+- `App.jsx` (`exportFile`): intenta primero el método de alta fidelidad con los
+  bytes originales; si falla (archivo no estándar, etc.) **cae con gracia** al
+  método clásico de `xlsx`, así exportar nunca se rompe.
+- Nota de build (no es bug): el bundle local "perdía" el componente porque sin
+  `VITE_CLERK_PUBLISHABLE_KEY` el `<App/>` de `main.jsx` queda como código muerto
+  y rollup lo elimina. En Vercel la variable existe y compila completo.
 
 ---
 

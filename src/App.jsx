@@ -3,6 +3,8 @@ import { UserButton, OrganizationSwitcher, useUser, useOrganization, useAuth } f
 import { STR, detectLang, saveLang } from "./i18n";
 // Sincronización de la memoria del equipo en la nube (y normalize compartido).
 import { normalize, stampChanges, mergeRemote, tombsLoad, tombsSave, kbPull, kbPush } from "./cloudSync";
+// Exportación de alta fidelidad: preserva el formato del Excel original del broker.
+import { exportPreservingFormat } from "./xlsxExport";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -1112,6 +1114,18 @@ export default function AutoCotizador() {
     }
   }, [notify, persistKB, tr, lang]);
 
+  // Carga un archivo base Y vuelve a evaluar el archivo que ya está en revisión.
+  // Clave para el caso "subí el archivo y no se llenó nada": al cargar la base
+  // después, hay que re-correr el match para que las coberturas se autollenen.
+  // (Solo se usa cuando aún no hay nada respondido, así que no pisa ediciones.)
+  const loadBaseAndRematch = useCallback(async (file) => {
+    await loadBaseFile(file);
+    if (wb) {
+      const XLSX = await getXLSX();
+      setSheets(extractCoverages(wb, kbRef.current, XLSX));
+    }
+  }, [loadBaseFile, wb]);
+
   // Dictado por voz para las instrucciones (Web Speech API, si el navegador la tiene).
   const toggleVoice = useCallback(() => {
     const SR = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -1482,24 +1496,25 @@ export default function AutoCotizador() {
         `Heads up: ${partes.join(" and ")} remain. Export anyway?`));
       if (!ok) return;
     }
+    // Descarga unos bytes como .xlsx con nombre fechado (común a ambos métodos).
+    const triggerDownload = (out) => {
+      const blob = new Blob([out], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}${tr.rpSuffix}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+
     try {
     const XLSX = await getXLSX();
-    // 1) escribir respuestas en las celdas originales
-    Object.entries(sheets).forEach(([sName, { coverages }]) => {
-      const ws = workbook.Sheets[sName];
-      if (!ws) return;
-      coverages.forEach(c => {
-        if (!c.respuesta) return;
-        const addr = XLSX.utils.encode_cell({ r: c.fila, c: c.respCol });
-        ws[addr] = { t: "s", v: c.respuesta };
-        // extender el rango si hace falta
-        const ref = ws["!ref"] ? XLSX.utils.decode_range(ws["!ref"]) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
-        if (c.respCol > ref.e.c) ref.e.c = c.respCol;
-        if (c.fila > ref.e.r) ref.e.r = c.fila;
-        ws["!ref"] = XLSX.utils.encode_range(ref);
-      });
-    });
-    // 2) hoja resumen con encabezado y resumen ejecutivo (imagen de producto)
+
+    // ── Datos de la hoja resumen (compartidos por ambos métodos) ──
     const allCov = Object.values(sheets).flatMap(s => s.coverages);
     const stTotal = allCov.length;
     const stAuto = allCov.filter(c => ["Exacta", "Similar", "IA", "Aprendida"].includes(c.tipo) && c.respuesta).length;
@@ -1530,47 +1545,85 @@ export default function AutoCotizador() {
     Object.entries(sheets).forEach(([sName, { coverages }]) => {
       coverages.forEach(c => summary.push([sName, c.texto, c.respuesta || tr.rpEmpty, tr.tipoLabel[c.tipo] || c.tipo, needsReview(c) ? tr.rpReviewMark : ""]));
     });
-    const wsS = XLSX.utils.aoa_to_sheet(summary);
-    wsS["!cols"] = [{ wch: 24 }, { wch: 65 }, { wch: 65 }, { wch: 12 }, { wch: 12 }];
-    // Une el título y los encabezados de sección a lo ancho para que se vean limpios.
-    wsS["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-      { s: { r: 13, c: 0 }, e: { r: 13, c: 4 } },
+    const summaryCols = [24, 65, 65, 12, 12];
+    const summaryMerges = [
+      XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }),
+      XLSX.utils.encode_range({ s: { r: 13, c: 0 }, e: { r: 13, c: 4 } }),
     ];
-    // Autofiltro de Excel sobre el detalle (fila 15 = encabezados de columna):
-    // permite filtrar por hoja, origen o "¿REVISAR?" directamente en Excel.
-    wsS["!autofilter"] = {
-      ref: XLSX.utils.encode_range({ s: { r: 14, c: 0 }, e: { r: summary.length - 1, c: 4 } }),
-    };
+    // Autofiltro sobre el detalle (fila 15 = encabezados): filtrar por hoja,
+    // origen o "¿REVISAR?" directamente en Excel.
+    const summaryAutofilter = XLSX.utils.encode_range({ s: { r: 14, c: 0 }, e: { r: summary.length - 1, c: 4 } });
     const SUMMARY_NAME = lang === "en" ? "✓ Answers" : "✓ Respuestas";
-    // Quita una hoja resumen previa de AMBOS lugares (Sheets y SheetNames);
-    // si solo se borra de Sheets, book_append_sheet lanza "already exists".
-    // Considera los nombres en ambos idiomas por si se cambió el idioma entre
-    // exportaciones, para no dejar dos hojas resumen.
-    ["✓ Respuestas", "✓ Answers"].forEach(prev => {
-      if (workbook.SheetNames.includes(prev)) {
-        workbook.SheetNames = workbook.SheetNames.filter(n => n !== prev);
-        delete workbook.Sheets[prev];
-      }
-    });
-    XLSX.utils.book_append_sheet(workbook, wsS, SUMMARY_NAME);
 
-    // 3) descargar — Blob + ancla en vez de XLSX.writeFile: es el método más
-    // robusto en el navegador (writeFile fallaba en silencio con archivos
-    // grandes o cuando el navegador bloqueaba la descarga interna).
-    const out = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([out], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    // El nombre lleva la fecha para que cada versión exportada quede identificada.
-    a.download = `${(fileName || "cotizacion").replace(/\.[^.]+$/, "")}${tr.rpSuffix}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    // ── Método 1 (preferido): edición quirúrgica del .xlsx ORIGINAL ──
+    // Devuelve el mismo archivo del broker con las respuestas puestas,
+    // conservando colores, bordes, fuentes, celdas combinadas y fórmulas.
+    // Solo es posible si tenemos los bytes originales del archivo subido.
+    let done = false;
+    let originalBytes = sessionBytesRef.current;
+    if (!originalBytes) {
+      const rec = await idbGet().catch(() => null);
+      originalBytes = rec && rec.bytes;
+    }
+    if (originalBytes) {
+      try {
+        const editsBySheet = {};
+        Object.entries(sheets).forEach(([sName, { coverages }]) => {
+          const m = new Map();
+          coverages.forEach(c => {
+            if (c.respuesta) m.set(XLSX.utils.encode_cell({ r: c.fila, c: c.respCol }), c.respuesta);
+          });
+          if (m.size) editsBySheet[sName] = m;
+        });
+        const out = exportPreservingFormat(originalBytes, editsBySheet, {
+          name: SUMMARY_NAME,
+          aoa: summary,
+          cols: summaryCols,
+          merges: summaryMerges,
+          autofilter: summaryAutofilter,
+        });
+        triggerDownload(out);
+        done = true;
+      } catch (e) {
+        // Archivo no estándar (OOXML) o algo inesperado: caemos al método clásico.
+        console.warn("Exportación de alta fidelidad no disponible, uso método estándar:", e);
+      }
+    }
+
+    // ── Método 2 (respaldo): regenerar con xlsx ──
+    // Produce un archivo válido aunque sin los estilos del original.
+    if (!done) {
+      Object.entries(sheets).forEach(([sName, { coverages }]) => {
+        const ws = workbook.Sheets[sName];
+        if (!ws) return;
+        coverages.forEach(c => {
+          if (!c.respuesta) return;
+          const addr = XLSX.utils.encode_cell({ r: c.fila, c: c.respCol });
+          ws[addr] = { t: "s", v: c.respuesta };
+          const ref = ws["!ref"] ? XLSX.utils.decode_range(ws["!ref"]) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
+          if (c.respCol > ref.e.c) ref.e.c = c.respCol;
+          if (c.fila > ref.e.r) ref.e.r = c.fila;
+          ws["!ref"] = XLSX.utils.encode_range(ref);
+        });
+      });
+      const wsS = XLSX.utils.aoa_to_sheet(summary);
+      wsS["!cols"] = summaryCols.map(w => ({ wch: w }));
+      wsS["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+        { s: { r: 13, c: 0 }, e: { r: 13, c: 4 } },
+      ];
+      wsS["!autofilter"] = { ref: summaryAutofilter };
+      // Quita una hoja resumen previa (en ambos idiomas) para no duplicarla.
+      ["✓ Respuestas", "✓ Answers"].forEach(prev => {
+        if (workbook.SheetNames.includes(prev)) {
+          workbook.SheetNames = workbook.SheetNames.filter(n => n !== prev);
+          delete workbook.Sheets[prev];
+        }
+      });
+      XLSX.utils.book_append_sheet(workbook, wsS, SUMMARY_NAME);
+      triggerDownload(XLSX.write(workbook, { bookType: "xlsx", type: "array" }));
+    }
+
     notify("ok", tr.msgExported);
     saveToHistory(); // queda en el historial como archivo completado
     } catch (e) {
@@ -2448,6 +2501,36 @@ export default function AutoCotizador() {
               <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>{tr.btnOther}</button>
             </div>
 
+            {/* Guía para el "arranque en frío": se detectaron coberturas pero no
+                se autollenó ninguna (memoria vacía). Sin esto, el usuario ve
+                muchas filas en blanco y cree que la app no sirve. */}
+            {auto === 0 && total > 0 && !processing && (
+              <div style={{ background: "#2A1A00", border: `1px solid ${C.yellow}`, borderRadius: 10, padding: "14px 18px", marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.yellow, marginBottom: 6 }}>
+                  💡 {L(`Detecté ${total} coberturas, pero no autollené ninguna: tu memoria está vacía todavía.`,
+                        `I detected ${total} coverages, but filled none: your memory is still empty.`)}
+                </div>
+                <div style={{ fontSize: 12, color: C.text, lineHeight: 1.6, marginBottom: 10 }}>
+                  {L("La app responde copiando de lo que ya conoce. Para que llene sola, elige un camino:",
+                     "The app answers by copying from what it already knows. To make it fill on its own, pick one:")}
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <label style={{ ...sx.btnGold, cursor: baseLoading ? "default" : "pointer", opacity: baseLoading ? 0.6 : 1, display: "inline-block" }}>
+                    📂 {baseLoading ? L("Leyendo…", "Reading…") : L("Cargar archivo base (recomendado)", "Load base file (recommended)")}
+                    <input type="file" accept=".xlsx,.xls,.xlsm" disabled={baseLoading} style={{ display: "none" }}
+                      onChange={e => { if (e.target.files[0]) loadBaseAndRematch(e.target.files[0]); e.target.value = ""; }} />
+                  </label>
+                  <button style={{ ...sx.btn, opacity: processing ? 0.6 : 1 }} onClick={processAI} disabled={processing}>
+                    🤖 {L("o Completar con IA", "or Complete with AI")}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
+                  {L("El archivo base es una cotización vieja ya respondida: la app aprende tu criterio y lo aplica a este archivo al instante.",
+                     "The base file is an old, already-answered quote: the app learns your criteria and applies it to this file instantly.")}
+                </div>
+              </div>
+            )}
+
             {processing && (
               <div style={{ background: "#0A1F3A", border: `1px solid ${C.accent}`, borderRadius: 8, padding: "12px 18px", marginBottom: 14, fontSize: 12 }}>
                 {tr.processingBox(progress)}
@@ -2600,3 +2683,4 @@ export default function AutoCotizador() {
     </div>
   );
 }
+
