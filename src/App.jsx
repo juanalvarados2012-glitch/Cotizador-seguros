@@ -1114,6 +1114,18 @@ export default function AutoCotizador() {
     }
   }, [notify, persistKB, tr, lang]);
 
+  // Carga un archivo base Y vuelve a evaluar el archivo que ya está en revisión.
+  // Clave para el caso "subí el archivo y no se llenó nada": al cargar la base
+  // después, hay que re-correr el match para que las coberturas se autollenen.
+  // (Solo se usa cuando aún no hay nada respondido, así que no pisa ediciones.)
+  const loadBaseAndRematch = useCallback(async (file) => {
+    await loadBaseFile(file);
+    if (wb) {
+      const XLSX = await getXLSX();
+      setSheets(extractCoverages(wb, kbRef.current, XLSX));
+    }
+  }, [loadBaseFile, wb]);
+
   // Dictado por voz para las instrucciones (Web Speech API, si el navegador la tiene).
   const toggleVoice = useCallback(() => {
     const SR = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -2488,6 +2500,36 @@ export default function AutoCotizador() {
               )}
               <button style={sx.btnSm} onClick={async () => { await saveToHistory(); setStep("upload"); setSheets({}); setFileName(""); setWb(null); clearSession(); }}>{tr.btnOther}</button>
             </div>
+
+            {/* Guía para el "arranque en frío": se detectaron coberturas pero no
+                se autollenó ninguna (memoria vacía). Sin esto, el usuario ve
+                muchas filas en blanco y cree que la app no sirve. */}
+            {auto === 0 && total > 0 && !processing && (
+              <div style={{ background: "#2A1A00", border: `1px solid ${C.yellow}`, borderRadius: 10, padding: "14px 18px", marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.yellow, marginBottom: 6 }}>
+                  💡 {L(`Detecté ${total} coberturas, pero no autollené ninguna: tu memoria está vacía todavía.`,
+                        `I detected ${total} coverages, but filled none: your memory is still empty.`)}
+                </div>
+                <div style={{ fontSize: 12, color: C.text, lineHeight: 1.6, marginBottom: 10 }}>
+                  {L("La app responde copiando de lo que ya conoce. Para que llene sola, elige un camino:",
+                     "The app answers by copying from what it already knows. To make it fill on its own, pick one:")}
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <label style={{ ...sx.btnGold, cursor: baseLoading ? "default" : "pointer", opacity: baseLoading ? 0.6 : 1, display: "inline-block" }}>
+                    📂 {baseLoading ? L("Leyendo…", "Reading…") : L("Cargar archivo base (recomendado)", "Load base file (recommended)")}
+                    <input type="file" accept=".xlsx,.xls,.xlsm" disabled={baseLoading} style={{ display: "none" }}
+                      onChange={e => { if (e.target.files[0]) loadBaseAndRematch(e.target.files[0]); e.target.value = ""; }} />
+                  </label>
+                  <button style={{ ...sx.btn, opacity: processing ? 0.6 : 1 }} onClick={processAI} disabled={processing}>
+                    🤖 {L("o Completar con IA", "or Complete with AI")}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
+                  {L("El archivo base es una cotización vieja ya respondida: la app aprende tu criterio y lo aplica a este archivo al instante.",
+                     "The base file is an old, already-answered quote: the app learns your criteria and applies it to this file instantly.")}
+                </div>
+              </div>
+            )}
 
             {processing && (
               <div style={{ background: "#0A1F3A", border: `1px solid ${C.accent}`, borderRadius: 8, padding: "12px 18px", marginBottom: 14, fontSize: 12 }}>
