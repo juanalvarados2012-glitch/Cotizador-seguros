@@ -10,6 +10,21 @@ import {
   SECS_PER_ITEM, needsReview, relevantKB,
   extractCoverages, extractSheetCoverages, kbFromWorkbook,
 } from "./matching";
+// Cliente del proxy de IA (auth + reintentos), aislado para poder testearlo.
+import { callAI } from "./aiClient";
+// Almacenamiento local por scope (localStorage + IndexedDB) e historial.
+import {
+  storage, setScope, kbKey, kbBackupKey, sessionKey, backupTsKey, tombsKey, migratedKey,
+  OLD_KB_KEY, OLD_SESSION_KEY,
+  idbSet, idbGet, idbClear, histSave, histList, histGet, histDelete, migrateOldIdb,
+} from "./db";
+// Paleta, tipografía, estilos y badge compartidos.
+import { C, F, sx, badge } from "./ui/theme";
+// Base de conocimiento semilla (genérica de ramos generales).
+import { SEED_KB, SEED_SET } from "./seedKb";
+// Componentes de presentación extraídos del monolito.
+import { Toast } from "./components/Toast";
+import { Modal } from "./components/Modal";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -26,365 +41,13 @@ function downloadJSON(filename, obj) {
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
-// ─── Storage shim (localStorage) ────────────────────────────────────────────
-const storage = {
-  async get(key) {
-    const v = localStorage.getItem(key);
-    return v == null ? null : { key, value: v };
-  },
-  async set(key, value) { localStorage.setItem(key, value); return { key, value }; },
-};
-
-// ─── Almacenamiento por empresa o por usuario (scope) ───────────────────────
-// El "scope" decide de quién es la memoria y el historial:
-//   • Si el usuario pertenece a una EMPRESA (Clerk Organization) activa, el
-//     scope es `org_<idEmpresa>`: TODO el equipo de esa agencia comparte la
-//     misma memoria. Lo que aprende uno, lo aprovechan todos.
-//   • Si no hay empresa activa (uso individual), el scope es la cuenta del
-//     usuario: cada persona tiene su propia memoria (comportamiento de siempre).
-// Las claves de localStorage y la base de IndexedDB llevan ese scope, así dos
-// equipos/usuarios en el mismo navegador no comparten datos.
-let SCOPE = "anon";
-function setScope(id) { SCOPE = id || "anon"; }
-
-// Claves de localStorage (dependen del usuario activo).
-const kbKey        = () => `cotizador_kb_${SCOPE}`;
-const kbBackupKey  = () => `cotizador_kb_${SCOPE}_backup`;
-const sessionKey   = () => `cotizador_sesion_${SCOPE}`;
-const backupTsKey  = () => `cotizador_kb_backup_ts_${SCOPE}`;
-const tombsKey     = () => `cotizador_kb_tombs_${SCOPE}`; // borrados pendientes de subir (☁)
-
-// Claves antiguas (globales, antes de tener cuentas) — solo para migrar una vez.
-const OLD_KB_KEY = "cotizador_kb_legacy_v1";
-const OLD_SESSION_KEY = "cotizador_sesion_v1";
-const OLD_IDB_NAME = "cotizador_sesion";
-
-// IndexedDB: una base de datos por usuario. Los nombres de los almacenes (store)
-// son los mismos dentro de cada base.
-const IDB_STORE = "archivo";
-const IDB_KEY = "actual";
-const HIST_META = "historial";       // { id, fileName, ts, total, answered, pending }
-const HIST_DATA = "historial_data";  // { id, sheets, bytes }
-
-function idbDbName() { return `cotizador_${SCOPE}`; }
-
-function idbOpen() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(idbDbName(), 2);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
-      if (!db.objectStoreNames.contains(HIST_META)) db.createObjectStore(HIST_META, { keyPath: "id" });
-      if (!db.objectStoreNames.contains(HIST_DATA)) db.createObjectStore(HIST_DATA, { keyPath: "id" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbSet(value) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, "readwrite");
-    tx.objectStore(IDB_STORE).put(value, IDB_KEY);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-async function idbGet() {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, "readonly");
-    const r = tx.objectStore(IDB_STORE).get(IDB_KEY);
-    r.onsuccess = () => { db.close(); resolve(r.result || null); };
-    r.onerror = () => { db.close(); reject(r.error); };
-  });
-}
-async function idbClear() {
-  try {
-    const db = await idbOpen();
-    await new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
-      tx.objectStore(IDB_STORE).delete(IDB_KEY);
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = () => { db.close(); resolve(); };
-    });
-  } catch { /* sin IndexedDB */ }
-}
-
-// ─── Historial de archivos ──────────────────────────────────────────────────
-async function histSave(entry) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([HIST_META, HIST_DATA], "readwrite");
-    tx.objectStore(HIST_META).put({
-      id: entry.id, fileName: entry.fileName, ts: entry.ts,
-      total: entry.total, answered: entry.answered, pending: entry.pending,
-      // Estadísticas para el panel de resultados (ROI). Los archivos guardados
-      // antes de esta versión no las traen: el panel las aproxima.
-      auto: entry.auto ?? null, ia: entry.ia ?? null,
-      review: entry.review ?? null, savedMin: entry.savedMin ?? null,
-    });
-    tx.objectStore(HIST_DATA).put({ id: entry.id, sheets: entry.sheets, bytes: entry.bytes || null });
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-async function histList() {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(HIST_META, "readonly");
-    const r = tx.objectStore(HIST_META).getAll();
-    r.onsuccess = () => { db.close(); resolve(r.result || []); };
-    r.onerror = () => { db.close(); reject(r.error); };
-  });
-}
-async function histGet(id) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(HIST_DATA, "readonly");
-    const r = tx.objectStore(HIST_DATA).get(id);
-    r.onsuccess = () => { db.close(); resolve(r.result || null); };
-    r.onerror = () => { db.close(); reject(r.error); };
-  });
-}
-async function histDelete(id) {
-  const db = await idbOpen();
-  return new Promise((resolve) => {
-    const tx = db.transaction([HIST_META, HIST_DATA], "readwrite");
-    tx.objectStore(HIST_META).delete(id);
-    tx.objectStore(HIST_DATA).delete(id);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); resolve(); };
-  });
-}
-
-// Copia (una sola vez) la base de datos global antigua a la del usuario actual:
-// el archivo de sesión y todo el historial. No borra la antigua.
-async function migrateOldIdb() {
-  if (!indexedDB.databases) {
-    // Algunos navegadores no listan bases; intentamos abrir la antigua igual.
-  }
-  const oldDb = await new Promise((resolve) => {
-    const req = indexedDB.open(OLD_IDB_NAME, 2);
-    req.onupgradeneeded = () => { try { req.transaction.abort(); } catch {} }; // no crear si no existía
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
-  }).catch(() => null);
-  if (!oldDb) return;
-  const has = (n) => oldDb.objectStoreNames.contains(n);
-  try {
-    // Sesión (archivo actual)
-    if (has(IDB_STORE)) {
-      const rec = await new Promise((res) => {
-        const tx = oldDb.transaction(IDB_STORE, "readonly");
-        const r = tx.objectStore(IDB_STORE).get(IDB_KEY);
-        r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
-      });
-      if (rec) await idbSet(rec);
-    }
-    // Historial
-    if (has(HIST_META) && has(HIST_DATA)) {
-      const metas = await new Promise((res) => {
-        const tx = oldDb.transaction(HIST_META, "readonly");
-        const r = tx.objectStore(HIST_META).getAll();
-        r.onsuccess = () => res(r.result || []); r.onerror = () => res([]);
-      });
-      for (const m of metas) {
-        const d = await new Promise((res) => {
-          const tx = oldDb.transaction(HIST_DATA, "readonly");
-          const r = tx.objectStore(HIST_DATA).get(m.id);
-          r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
-        });
-        await histSave({ ...m, sheets: d && d.sheets ? d.sheets : null, bytes: d && d.bytes ? d.bytes : null });
-      }
-    }
-  } finally {
-    oldDb.close();
-  }
-}
 
 
 
-// ─── BASE DE CONOCIMIENTO SEMILLA (genérica de ramos generales) ───────────────
-// Base ILUSTRATIVA con coberturas estándar del mercado y respuestas neutras, solo
-// para que la app funcione en la demo. NO contiene el criterio de ninguna
-// aseguradora en particular: cada cliente afina su propio criterio durante el uso
-// (la memoria aprende de sus correcciones). Las respuestas reales —límites,
-// deducibles, exclusiones— las define el suscriptor de cada compañía.
-const SEED_KB = [
-  { cobertura: "Incendio y/o rayo y/o humo", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "HMACC AMIT Huelga Motín Asonada Conmoción Civil Actos Malintencionados de Terceros", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Terremoto tsunami temblor erupción volcánica maremoto convulsión de la naturaleza", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Tifón huracán tornado ciclón granizada perturbación atmosférica", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Lluvia e Inundación", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Explosión", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Daños por agua", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Colapso", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Desprendimiento de tierra o rocas alud", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Daños por fuego subterráneo", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Choque con un vehículo terrestre o animal", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Contaminación de producto", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Todo riesgo de rotura de maquinaria", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Lucro cesante por interrupción del negocio incendio", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Robo y/o Asalto a primer riesgo absoluto", respuesta: "Cubierto a primer riesgo (límite a definir)" },
-  { cobertura: "Remoción de escombros", respuesta: "Cubierto (sublímite a definir)" },
-  { cobertura: "Honorarios de Profesionales gastos de viaje y estadía", respuesta: "Cubierto (sublímite a definir)" },
-  { cobertura: "Documentos y modelos", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Rotura de vidrios y cristales", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Gastos de extinción de incendio", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Gastos para aminorar la pérdida", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Terrorismo y Sabotaje", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Combustión espontánea", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Arrendamientos alquiler", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Extintores y Otros Medios de Extinción", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Refrigeración", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Suspensión de los servicios de energía eléctrica agua o gas", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Hurto excepto Mercaderías y Dinero", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Gastos por Anulación y Duplicación de Documentos", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Saqueo", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Ajustadores", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Cláusula de Cobertura de Alteraciones y Reparaciones", respuesta: "Cubierto (sublímite a definir)" },
-  { cobertura: "Amparo automático nuevos predios propiedades y activos", respuesta: "Cubierto (plazo y límite a definir)" },
-  { cobertura: "Autoridad civil", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Avisos y letreros", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Bienes a la intemperie", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Bienes del asegurado bajo responsabilidad de terceros", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Equipos móviles y portátiles", respuesta: "Cubierto mediante endoso (a definir)" },
-  { cobertura: "Obras civiles en curso", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Propiedad Horizontal", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Reposición o reemplazo ramos técnicos", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Restitución Automática del Valor Asegurado", respuesta: "Sujeto a evaluación del suscriptor" },
-  { cobertura: "Salvamento", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Equipo Electrónico Todo riesgo", respuesta: "Cubierto según condiciones generales de la póliza" },
-  { cobertura: "Responsabilidad Civil frente a terceros", respuesta: "Cubierto (límite a definir)" },
-  { cobertura: "Transporte de mercadería", respuesta: "Sujeto a evaluación del suscriptor" },
-  // Deducibles (genéricos: el valor real lo define cada aseguradora)
-  { cobertura: "Deducible terremoto lluvia inundación colapso eventos naturaleza", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible otros eventos caída accidental", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible vidrios", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible robo asalto", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible hurto", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible rotura de maquinaria", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible equipo electrónico", respuesta: "Según tabla de deducibles de la póliza" },
-  { cobertura: "Deducible responsabilidad civil", respuesta: "Según tabla de deducibles de la póliza" },
-].map(k => ({ ...k, count: 1 }));
-
-// Coberturas de la base semilla (normalizadas): sirven para distinguir en el
-// panel de memoria lo que vino "de fábrica" de lo aprendido durante el uso.
-const SEED_SET = new Set(SEED_KB.map(k => normalize(k.cobertura)));
-
-// ─── Colores ──────────────────────────────────────────────────────────────────
-const C = {
-  bg: "#0B0F1A", surface: "#131929", border: "#1E2D45", accent: "#1A6FD8",
-  accentLight: "#3A8EF8", gold: "#C4975A", green: "#2ECC71", red: "#E74C3C",
-  yellow: "#F39C12", text: "#E8EDF5", muted: "#6B7FA0", card: "#0E1828",
-};
 
 
-// ─── IA solo para pendientes (vía proxy serverless /api/quote) ──────────────────
-// La API key vive en el servidor (Groq), nunca en el navegador.
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 
-async function callAI(pendientes, hoja, kb, instrucciones = "", getToken = null) {
-  const MAX_RETRIES = 4;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000); // 30s de timeout por lote
-    try {
-      // El proxy de IA exige sesión: adjunta el token de Clerk (fresco en cada
-      // intento, por si expira durante una corrida larga).
-      const token = getToken ? await getToken() : null;
-      const res = await fetch("/api/quote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          hoja,
-          instrucciones: (instrucciones || "").slice(0, 1200),
-          pendientes: pendientes.map(p => ({ texto: p.texto })),
-          kb: kb.slice(0, 15).map(k => ({ cobertura: k.cobertura, respuesta: k.respuesta })),
-        }),
-      });
-
-      // 429 = límite de velocidad (Groq) o de uso por usuario → espera y reintenta.
-      if (res.status === 429) {
-        let retryAfter = 0, serverMsg = "";
-        try { const j = await res.json(); retryAfter = Number(j.retryAfter) || 0; serverMsg = j.error || ""; } catch {}
-        clearTimeout(timer);
-        if (attempt < MAX_RETRIES) {
-          // Espera lo que pida el servidor, PERO con tope de 20 s: un límite
-          // diario reporta un retryAfter de horas y no queremos colgar la app.
-          const base = retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt;
-          await sleep(Math.min(base, 20000));
-          continue;
-        }
-        // Tras los reintentos, surfacea el motivo real (límite diario, etc.).
-        throw new Error(serverMsg || "Servicio de IA saturado (429). Espera un momento y vuelve a intentar.");
-      }
-
-      if (!res.ok) {
-        let msg = `Error ${res.status}`;
-        try { const j = await res.json(); msg = j.error || msg; } catch {}
-        throw new Error(msg);
-      }
-
-      const data = await res.json();
-      return Array.isArray(data.respuestas) ? data.respuestas : [];
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === "AbortError") throw new Error("La IA tardó demasiado (timeout de 30s).");
-      // error de red puntual → reintenta con espera
-      if (attempt < MAX_RETRIES && /network|fetch|failed/i.test(e.message || "")) {
-        await sleep(Math.min(2000 * 2 ** attempt, 20000));
-        continue;
-      }
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw new Error("No se pudo contactar la IA tras varios intentos.");
-}
-
-// ─── Estilos ────────────────────────────────────────────────────────────────────
-const F = "'IBM Plex Mono','Courier New',monospace";
-const sx = {
-  app: {
-    minHeight: "100vh", color: C.text, fontFamily: F,
-    background: `radial-gradient(900px circle at 12% -8%, rgba(26,111,216,.16), transparent 45%), radial-gradient(760px circle at 96% -2%, rgba(196,151,90,.11), transparent 46%), ${C.bg}`,
-    backgroundAttachment: "fixed",
-  },
-  header: { background: `linear-gradient(135deg,${C.surface},#0A1628)`, borderBottom: `1px solid ${C.border}`, padding: "18px 28px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" },
-  logo: { width: 38, height: 38, background: `linear-gradient(135deg,${C.gold},#E8B96A)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: C.bg },
-  body: { padding: "24px 28px", maxWidth: 1400, margin: "0 auto" },
-  btn: { background: `linear-gradient(135deg,${C.accent},#1555B0)`, color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontFamily: F, fontWeight: 600 },
-  btnGold: { background: `linear-gradient(135deg,${C.gold},#A8813E)`, color: C.bg, border: "none", borderRadius: 8, padding: "11px 22px", cursor: "pointer", fontSize: 13, fontFamily: F, fontWeight: 700 },
-  btnSm: { background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 11px", cursor: "pointer", fontSize: 11, fontFamily: F },
-  drop: { border: `2px dashed ${C.border}`, borderRadius: 12, padding: 48, textAlign: "center", cursor: "pointer", background: C.surface },
-  card: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 },
-  th: { background: C.surface, color: C.muted, padding: "9px 11px", textAlign: "left", fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0 },
-  td: { padding: "9px 11px", borderBottom: `1px solid ${C.border}`, verticalAlign: "top", lineHeight: 1.55 },
-  ta: { background: "#0A1425", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: 8, fontSize: 12, fontFamily: F, width: "100%", resize: "vertical", minHeight: 54, outline: "none" },
-  stat: { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "13px 18px", flex: 1, minWidth: 130 },
-  statLabel: { fontSize: 10, color: C.muted, letterSpacing: 1.2, textTransform: "uppercase" },
-};
-function badge(tipo) {
-  const map = {
-    Exacta: [C.green, "#1A4020", "#0F2614"],
-    Similar: [C.accentLight, "#1A4070", "#0D2440"],
-    IA: [C.accentLight, "#1A4070", "#0D2440"],
-    Manual: [C.gold, "#4A3A1A", "#241B0D"],
-    Pendiente: [C.yellow, "#4A3000", "#241800"],
-    Aprendida: [C.green, "#1A4020", "#0F2614"],
-  };
-  const [col, bd, bg] = map[tipo] || [C.muted, C.border, C.surface];
-  return { display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: col, border: `1px solid ${bd}`, background: bg };
-}
 
 // ─── Componente ─────────────────────────────────────────────────────────────────
 export default function AutoCotizador() {
@@ -508,7 +171,7 @@ export default function AutoCotizador() {
         // ── Migración única de los datos antiguos (sin cuenta) ──
         // Solo en uso personal: una empresa no hereda datos sueltos de un
         // navegador, arranca con la base de conocimiento semilla.
-        const migFlag = `cotizador_migrado_${SCOPE}`;
+        const migFlag = migratedKey();
         if (!orgId && !localStorage.getItem(migFlag)) {
           try {
             const oldKb = localStorage.getItem(OLD_KB_KEY);
@@ -1633,30 +1296,10 @@ export default function AutoCotizador() {
         </div>
       </div>
 
-      {toast && (
-        <div style={{
-          position: "fixed", top: 16, right: 16, zIndex: 50, maxWidth: 380,
-          padding: "12px 16px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5,
-          display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
-          boxShadow: "0 8px 30px rgba(0,0,0,.45)",
-          background: toast.type === "error" ? "#2A1212" : toast.type === "ok" ? "#0F2614" : "#0A1F3A",
-          border: `1px solid ${toast.type === "error" ? C.red : toast.type === "ok" ? C.green : C.accent}`,
-          color: toast.type === "error" ? "#FFB3AB" : toast.type === "ok" ? "#A8E6BC" : "#A8C8F0",
-        }} onClick={() => setToast(null)}>
-          <span style={{ fontSize: 15 }}>{toast.type === "error" ? "⚠️" : toast.type === "ok" ? "✅" : "ℹ️"}</span>
-          <span>{toast.msg}</span>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       {showPriv && (
-        <div onClick={() => setShowPriv(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 640, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.green }}>{tr.privTitle}</span>
-              <button onClick={() => setShowPriv(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
-            </div>
+        <Modal title={tr.privTitle} titleColor={C.green} maxWidth={640} narrow={narrow} onClose={() => setShowPriv(false)}>
             <div style={{ padding: "16px 18px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.7, color: C.text }}>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ color: C.green, fontWeight: 700, marginBottom: 4 }}>{tr.privWhereTitle}</div>
@@ -1678,19 +1321,11 @@ export default function AutoCotizador() {
                 <b style={{ color: C.yellow }}>{tr.privEnterprise}</b>{tr.privEnterpriseBody}
               </div>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {showHist && (
-        <div onClick={() => setShowHist(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 720, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.accentLight }}>{tr.histTitle(histItems.length)}</span>
-              <button onClick={() => setShowHist(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
-            </div>
+        <Modal title={tr.histTitle(histItems.length)} titleColor={C.accentLight} maxWidth={720} narrow={narrow} onClose={() => setShowHist(false)}>
             {histItems.length > 0 && (
               <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}` }}>
                 <input value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder={tr.histSearch}
@@ -1740,19 +1375,11 @@ export default function AutoCotizador() {
                 {tr.histBackupHint}
               </span>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {showKB && (
-        <div onClick={() => setShowKB(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 760, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>{tr.kbTitle(kb.length)}</span>
-              <button onClick={() => setShowKB(false)} style={{ ...sx.btnSm, fontSize: 14 }}>✕</button>
-            </div>
+        <Modal title={tr.kbTitle(kb.length)} titleColor={C.gold} maxWidth={760} narrow={narrow} onClose={() => setShowKB(false)}>
             {isCompany && (
               <div style={{
                 padding: "9px 18px", borderBottom: `1px solid ${C.border}`, fontSize: 11, lineHeight: 1.55,
@@ -1846,23 +1473,14 @@ export default function AutoCotizador() {
                 );
               })()}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* ─── 📈 Panel de resultados (ROI): el argumento de compra en cifras ─── */}
       {showROI && (
-        <div onClick={() => setShowROI(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: narrow ? 10 : 40 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: "100%", maxWidth: 780, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.gold }}>
-                📈 {L("Resultados (ROI)", "Results (ROI)")}{roiOwner ? ` · ${roiOwner}` : ""}
-              </span>
-              <button onClick={() => setShowROI(false)} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
-            </div>
-
+        <Modal
+          title={`📈 ${L("Resultados (ROI)", "Results (ROI)")}${roiOwner ? ` · ${roiOwner}` : ""}`}
+          titleColor={C.gold} maxWidth={780} narrow={narrow} onClose={() => setShowROI(false)}>
             <div style={{ padding: "11px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {[["mes", L("Este mes", "This month")], ["todo", L("Histórico", "All time")]].map(([key, label]) => (
                 <button key={key} onClick={() => setRoiPeriod(key)} style={{
@@ -1950,8 +1568,7 @@ export default function AutoCotizador() {
                    "Print or save as PDF and forward it to management: these numbers justify the tool.")}
               </span>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       <div style={{ ...sx.body, padding: narrow ? "16px 14px" : "24px 28px" }}>

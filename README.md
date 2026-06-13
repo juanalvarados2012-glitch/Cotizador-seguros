@@ -108,6 +108,10 @@ Cada push y PR ejecuta lint + tests + build en GitHub Actions (`.github/workflow
 - `src/matching.js` — matching de coberturas + extracción del Excel (lógica pura).
 - `src/cloudSync.js` — fusión de memoria del equipo (cliente).
 - `src/xlsxExport.js` — exportación que preserva el formato del broker.
+- `src/aiClient.js` — cliente del proxy de IA (auth + reintentos).
+- `src/db.js` — almacenamiento local por scope (localStorage + IndexedDB) e historial.
+- `src/seedKb.js` — base de conocimiento semilla. `src/ui/theme.js` — paleta y estilos.
+- `src/components/` — componentes de presentación (`Toast`, `Modal`).
 - `api/quote.js` — proxy de IA (auth Clerk + rate limit).
 - `api/kb.js` — memoria del equipo (auth Clerk + compare-and-swap).
 - `api/_auth.js` · `api/_kv.js` · `api/_merge.js` · `api/_ratelimit.js` — módulos
