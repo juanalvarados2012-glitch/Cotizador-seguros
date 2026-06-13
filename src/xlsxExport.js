@@ -33,13 +33,13 @@ function unescapeXml(s) {
     .replace(/&amp;/g, "&");
 }
 
-function colToNum(letters) {
+export function colToNum(letters) {
   let n = 0;
   for (let i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
   return n;
 }
 
-function numToCol(n) {
+export function numToCol(n) {
   let s = "";
   while (n > 0) {
     const r = (n - 1) % 26;
@@ -62,7 +62,7 @@ function styleAttrOf(cellXml) {
 
 // Aplica un mapa de ediciones { "B2": "valor", … } al XML de una hoja.
 // Solo toca <sheetData>; el resto del XML queda byte a byte igual.
-function applyEditsToSheet(xml, edits) {
+export function applyEditsToSheet(xml, edits) {
   const open = xml.match(/<sheetData\b[^>]*>/);
   // <sheetData/> vacío: lo convertimos en bloque abierto para poder insertar filas.
   if (!open) {

@@ -16,96 +16,20 @@
 //   y CLERK_SECRET_KEY (ya usada por el login).
 // Si faltan, responde { disabled: true } y la app sigue funcionando solo-local.
 
-import { verifyToken } from "@clerk/backend";
+import { verifyClerk } from "./_auth.js";
+import { kvEnv, kvGet, kvSet, kvCmd, kvCompareAndSet } from "./_kv.js";
+import { mergeIntoMap } from "./_merge.js";
 
 const MAX_ENTRIES = 5000; // tope de entradas vivas por empresa
-const MAX_TEXT = 400; // tope de caracteres por campo
-const MAX_BATCH = 1500; // tope de cambios por llamada
-const TOMB_TTL = 90 * 24 * 3600 * 1000; // lápidas: 90 días y se purgan
-
-function kvEnv() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? { url: url.replace(/\/$/, ""), token } : null;
-}
-
-async function kvGet(kv, key) {
-  const res = await fetch(`${kv.url}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${kv.token}` },
-  });
-  if (!res.ok) throw new Error(`KV GET ${res.status}`);
-  const data = await res.json();
-  if (!data || data.result == null) return null;
-  try { return JSON.parse(data.result); } catch { return null; }
-}
-
-async function kvSet(kv, key, value) {
-  // POST /set/<key> con el valor en el cuerpo (forma recomendada para valores grandes)
-  const res = await fetch(`${kv.url}/set/${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${kv.token}` },
-    body: JSON.stringify(value),
-  });
-  if (!res.ok) throw new Error(`KV SET ${res.status}`);
-}
 
 // Verifica el token de Clerk y devuelve la empresa activa del usuario.
-// Soporta los dos formatos de claims de Clerk (v1: org_id · v2: o.id).
+// Solo hay memoria en la nube para EMPRESAS: sin organización activa → null.
 async function authOrg(req) {
-  const header = req.headers.authorization || req.headers.Authorization || "";
-  const token = String(header).replace(/^Bearer\s+/i, "").trim();
-  if (!token) return null;
-  const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
-  const orgId = payload.org_id || (payload.o && payload.o.id) || null;
-  if (!orgId) return null;
-  return { orgId, userId: payload.sub };
+  const auth = await verifyClerk(req);
+  if (!auth || !auth.orgId) return null;
+  return { orgId: auth.orgId, userId: auth.userId };
 }
 
-const clip = (s, n) => String(s || "").slice(0, n);
-
-// Fusiona los cambios del cliente dentro del mapa guardado.
-// Por entrada gana el `updatedAt` más reciente (igual que en el cliente).
-// Exportada para poder probarla sin servidor.
-export function mergeIntoMap(map, upserts = [], deletes = []) {
-  for (const u of upserts.slice(0, MAX_BATCH)) {
-    if (!u || !u.cobertura || !("respuesta" in u)) continue;
-    const key = clip(u.key || "", MAX_TEXT) || null;
-    const k = key || normalizeKey(u.cobertura);
-    const cur = map[k];
-    const ts = Number(u.updatedAt) || Date.now();
-    if (cur && (cur.updatedAt || 0) >= ts) continue; // lo guardado es más nuevo
-    map[k] = {
-      cobertura: clip(u.cobertura, MAX_TEXT),
-      respuesta: clip(u.respuesta, MAX_TEXT),
-      count: Math.max(1, Number(u.count) || 1),
-      updatedAt: ts,
-    };
-  }
-  for (const d of (deletes || []).slice(0, MAX_BATCH)) {
-    if (!d || !d.key) continue;
-    const k = clip(d.key, MAX_TEXT);
-    const ts = Number(d.updatedAt) || Date.now();
-    const cur = map[k];
-    if (cur && (cur.updatedAt || 0) >= ts) continue; // alguien la editó después del borrado
-    map[k] = { deleted: true, updatedAt: ts };
-  }
-  // Purga lápidas viejas (ya se propagaron a todo el equipo hace tiempo).
-  const limit = Date.now() - TOMB_TTL;
-  for (const k of Object.keys(map)) {
-    if (map[k].deleted && (map[k].updatedAt || 0) < limit) delete map[k];
-  }
-  return map;
-}
-
-// Misma normalización que el cliente (clave canónica de cada cobertura).
-function normalizeKey(s) {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 export default async function handler(req, res) {
   const kv = kvEnv();
@@ -157,16 +81,58 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No se enviaron cambios." });
     }
 
-    const map = mergeIntoMap((await kvGet(kv, key)) || {}, upserts, deletes);
+    // Lee-fusiona-escribe con compare-and-swap: si otro miembro del equipo
+    // escribió entremedio, releemos y reintentamos en vez de pisar su cambio.
+    // (El merge es por-entrada last-write-wins, así que reintentar es seguro.)
+    // Un fallo transitorio de GET o de CAS NO se sobrescribe a ciegas: se
+    // reintenta el ciclo completo. Solo en el último intento, si el CAS siguió
+    // fallando (p. ej. backend sin EVAL), se hace un guardado directo de último
+    // recurso. Los fallos persistentes devuelven 503 sin pisar a nadie.
+    const RETRIES = 5;
+    let vivas = 0;
+    let written = false;
+    let lastErr = null;
+    for (let attempt = 0; attempt < RETRIES && !written; attempt++) {
+      let raw;
+      try {
+        raw = await kvCmd(kv, ["GET", key]); // valor crudo (string) o null
+      } catch (e) {
+        lastErr = e; // GET transitorio: reintenta el ciclo
+        continue;
+      }
+      let current = {};
+      if (raw != null) { try { current = JSON.parse(raw); } catch { current = {}; } }
+      const map = mergeIntoMap(current, upserts, deletes);
 
-    const vivas = Object.values(map).filter((e) => !e.deleted).length;
-    if (vivas > MAX_ENTRIES) {
-      return res.status(413).json({
-        error: `La memoria del equipo superó el límite de ${MAX_ENTRIES} entradas. Depúrala desde el panel de Memoria.`,
+      vivas = Object.values(map).filter((e) => !e.deleted).length;
+      if (vivas > MAX_ENTRIES) {
+        return res.status(413).json({
+          error: `La memoria del equipo superó el límite de ${MAX_ENTRIES} entradas. Depúrala desde el panel de Memoria.`,
+        });
+      }
+
+      try {
+        written = await kvCompareAndSet(kv, key, raw, JSON.stringify(map));
+      } catch (e) {
+        lastErr = e;
+        if (attempt === RETRIES - 1) {
+          // El CAS falló en todos los intentos (backend sin EVAL): último
+          // recurso, guardado directo como el método clásico. Pierde atomicidad
+          // solo en este caso límite y poco frecuente.
+          await kvSet(kv, key, map);
+          written = true;
+        }
+        // si no es el último intento: el bucle reintenta el CAS (atómico)
+      }
+    }
+    if (!written) {
+      // Conflicto sostenido o fallo de infraestructura: el cliente conserva sus
+      // cambios localmente y reintenta. No pisamos lo que escribió el equipo.
+      return res.status(503).json({
+        error: `No se pudo sincronizar la memoria del equipo${lastErr ? `: ${String(lastErr.message || lastErr).slice(0, 160)}` : ""}. ` +
+          "Tus cambios quedaron guardados en este navegador y se reintentarán.",
       });
     }
-
-    await kvSet(kv, key, map);
     return res.status(200).json({ ok: true, ts: Date.now(), n: vivas });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error interno de sincronización." });

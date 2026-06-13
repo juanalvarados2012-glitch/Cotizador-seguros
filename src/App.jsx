@@ -5,6 +5,11 @@ import { STR, detectLang, saveLang } from "./i18n";
 import { normalize, stampChanges, mergeRemote, tombsLoad, tombsSave, kbPull, kbPush } from "./cloudSync";
 // Exportación de alta fidelidad: preserva el formato del Excel original del broker.
 import { exportPreservingFormat } from "./xlsxExport";
+// Matching de coberturas + extracción del Excel (lógica pura, testeable aparte).
+import {
+  SECS_PER_ITEM, needsReview, relevantKB,
+  extractCoverages, extractSheetCoverages, kbFromWorkbook,
+} from "./matching";
 
 // xlsx se carga bajo demanda (code-splitting) para aligerar la carga inicial.
 let _xlsx = null;
@@ -199,19 +204,6 @@ async function migrateOldIdb() {
   }
 }
 
-// Ahorro de tiempo estimado: ~40 s por cobertura resuelta a mano (buscar
-// precedente, redactar y escribir). Se usa en pantalla, en el Excel y en el ROI.
-const SECS_PER_ITEM = 40;
-
-// ¿La respuesta conviene que un humano la revise? (baja confianza, REVISAR, match flojo)
-function needsReview(c) {
-  if (!c || !c.respuesta) return false;
-  const r = normalize(c.respuesta);
-  if (r.includes("revisar")) return true;
-  if (c.tipo === "IA" && c.confianza === "baja") return true;
-  if (c.tipo === "Similar" && typeof c.score === "number" && c.score < 0.7) return true;
-  return false;
-}
 
 
 // ─── BASE DE CONOCIMIENTO SEMILLA (genérica de ramos generales) ───────────────
@@ -289,223 +281,27 @@ const C = {
   yellow: "#F39C12", text: "#E8EDF5", muted: "#6B7FA0", card: "#0E1828",
 };
 
-// ─── Normalización + matching ──────────────────────────────────────────────────
-const STOP = new Set(["de","la","el","los","las","y","o","del","en","por","para","un","una","a","con","que","se","su","al","como","es","si","no","aplicable","suma","asegurable","requerida","clausula","cláusula","opcional"]);
-
-// normalize() ahora vive en cloudSync.js (misma l\u00f3gica de siempre): el matching
-// y las claves de sincronizaci\u00f3n deben normalizar id\u00e9ntico, as\u00ed que se comparte.
-// Abreviaturas comunes en slips de seguros (Ecuador): se expanden a sus palabras
-// completas para que "R.C." haga match con "Responsabilidad Civil", etc.
-// Solo siglas inequívocas del ramo, para no crear coincidencias falsas.
-const ABBR = {
-  rc: ["responsabilidad", "civil"],
-  amit: ["actos", "malintencionados", "terceros"],
-  hmacc: ["huelga", "motin", "asonada", "conmocion", "civil"],
-  deduc: ["deducible"],
-  resp: ["responsabilidad"],
-};
-function tokens(s) {
-  return normalize(s).split(" ")
-    .flatMap(w => (ABBR[w] !== undefined ? ABBR[w] : [w]))
-    .filter(w => w.length > 2 && !STOP.has(w));
-}
-function jaccard(a, b) {
-  const A = new Set(tokens(a)), B = new Set(tokens(b));
-  if (A.size === 0 || B.size === 0) return 0;
-  let inter = 0;
-  A.forEach(x => { if (B.has(x)) inter++; });
-  return inter / (A.size + B.size - inter);
-}
-// Devuelve {respuesta, score, tipo} o null
-// Combina Jaccard con un score de "contención": el texto del broker suele ser
-// más largo que la clave en memoria, y Jaccard lo penaliza injustamente. La
-// contención mide qué fracción de la clave aparece en el texto, lo que autollena
-// muchas más coberturas. Las coincidencias flojas (0.5–0.7) quedan marcadas
-// como "por revisar" para que un humano las confirme.
-function matchKB(texto, kb) {
-  const nTexto = normalize(texto);
-  const tSet = new Set(tokens(texto));
-  let best = null;
-  for (const k of kb) {
-    const nK = normalize(k.cobertura);
-    if (nK === nTexto) return { respuesta: k.respuesta, score: 1, tipo: "Exacta" };
-    const kSet = new Set(tokens(k.cobertura));
-    if (kSet.size === 0 || tSet.size === 0) continue;
-    let inter = 0;
-    kSet.forEach(x => { if (tSet.has(x)) inter++; });
-    const jac = inter / (kSet.size + tSet.size - inter);   // similitud simétrica
-    const cont = inter / kSet.size;                          // cuánto de la clave está en el texto
-    const subset = kSet.size <= 6 && inter === kSet.size;    // clave corta totalmente contenida
-    let eff = Math.max(jac, cont * 0.9);
-    if (subset) eff = Math.max(eff, 0.8);
-    if (!best || eff > best.score) best = { respuesta: k.respuesta, score: eff, tipo: eff >= 0.85 ? "Exacta" : "Similar" };
-  }
-  if (best && best.score >= 0.5) return best;
-  return null;
-}
-
-// ─── Detectar columna de respuesta en una hoja ─────────────────────────────────
-function findResponseCol(data, coverageCol) {
-  // Busca en las primeras 6 filas un encabezado tipo COTIZACIÓN / CÓNDOR / RESPUESTA
-  for (let r = 0; r < Math.min(8, data.length); r++) {
-    const row = data[r] || [];
-    for (let c = row.length - 1; c >= 0; c--) {
-      const v = normalize(row[c]);
-      if (c > coverageCol && /(cotizacion|respuesta|oferta|aseguradora|propuesta|condiciones ofertadas)/.test(v)) return c;
-    }
-  }
-  // fallback: una columna a la derecha del bloque de coberturas
-  let maxCol = coverageCol;
-  data.forEach(row => { if (row.length - 1 > maxCol) maxCol = row.length - 1; });
-  return Math.max(coverageCol + 1, maxCol);
-}
-
-// ─── Extraer coberturas del workbook ───────────────────────────────────────────
-// Ramos típicos del mercado ecuatoriano para reconocer hojas por su nombre.
-const RELEVANT = ["multirriesgo","multiriesgo","deducible","dinero","valores","equipo","maquinaria",
-  "vehiculo","vehículo","veh ","responsabilidad","transporte","garantia","garantía","incendio","robo",
-  "electronico","electrónico","fidelidad","cumplimiento","anticipo","accidentes","lucro","rotura",
-  "todo riesgo","casco","cobertura","ramo"];
-
-// Celdas que son ENCABEZADO de tabla (no una cobertura real). Solo coincidencia
-// exacta de toda la celda, para no descartar coberturas reales que empiecen igual.
-const HEADER_CELLS = /^((nuestra )?respuesta(s)?( aseguradora| compania)?|cobertura(s)?( item)?|item(s)?|descripcion|detalle|amparos|beneficios|condiciones( particulares| generales)?|observaciones|cotizacion|aseguradora)$/;
-
-function isHeaderCell(val) { return HEADER_CELLS.test(normalize(val)); }
-
-function isListSheet(clean) {
-  return clean.includes("listado") || clean.includes("list ") || clean.startsWith("list");
-}
-
-function extractSheetCoverages(wb, sheetName, kb, XLSX) {
-  const ws = wb.Sheets[sheetName];
-  if (!ws) return null;
-  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-  if (data.length === 0) return null;
-
-  const coverages = [];
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    // columna de cobertura = primera celda con texto descriptivo
-    let covCol = -1, texto = "";
-    for (let j = 0; j <= 2 && j < row.length; j++) {
-      const val = String(row[j]).trim();
-      if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
-        !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
-        !isHeaderCell(val) &&
-        !/^\d+$/.test(val)) {
-        covCol = j; texto = val; break;
-      }
-    }
-    if (covCol === -1) continue;
-
-    const respCol = findResponseCol(data, covCol);
-    const match = matchKB(texto, kb);
-    coverages.push({
-      fila: i, covCol, respCol,
-      texto,
-      respuesta: match ? match.respuesta : "",
-      tipo: match ? match.tipo : "Pendiente",
-      score: match ? match.score : 0,
-      editado: false,
-    });
-  }
-  if (coverages.length === 0) return null;
-  return { coverages, respCol: coverages[0].respCol };
-}
-
-function extractCoverages(wb, kb, XLSX) {
-  const results = {};
-  // 1ª pasada: hojas cuyo nombre menciona un ramo conocido.
-  for (const sheetName of wb.SheetNames) {
-    const clean = normalize(sheetName);
-    if (!RELEVANT.some(r => clean.includes(normalize(r)))) continue;
-    if (isListSheet(clean)) continue;
-    const r = extractSheetCoverages(wb, sheetName, kb, XLSX);
-    if (r) results[sheetName] = r;
-  }
-  // 2ª pasada (respaldo): si ningún nombre de hoja coincidió, se analizan TODAS
-  // las hojas (menos listados) y se aceptan las que tengan suficientes filas de
-  // cobertura. Así la app funciona aunque el broker nombre sus hojas distinto
-  // ("Hoja1", "Slip", el nombre del cliente, etc.).
-  if (Object.keys(results).length === 0) {
-    for (const sheetName of wb.SheetNames) {
-      if (isListSheet(normalize(sheetName))) continue;
-      const r = extractSheetCoverages(wb, sheetName, kb, XLSX);
-      if (r && r.coverages.length >= 3) results[sheetName] = r;
-    }
-  }
-  return results;
-}
-
-// ─── Archivo base (key): construir memoria desde un archivo ya respondido ──────
-// Recorre TODAS las hojas y extrae pares "cobertura → respuesta" de las filas que
-// YA traen una respuesta escrita. Detección flexible: el usuario puede subir un
-// archivo de pares pregunta/respuesta o una cotización vieja completa, y la app
-// localiza sola la columna de respuestas. Devuelve un arreglo tipo KB.
-function kbFromWorkbook(wb, XLSX) {
-  const pairs = [];
-  for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    if (!ws) continue;
-    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-    if (data.length === 0) continue;
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i] || [];
-      // columna de cobertura = primera celda con texto descriptivo
-      let covCol = -1, texto = "";
-      for (let j = 0; j <= 2 && j < row.length; j++) {
-        const val = String(row[j]).trim();
-        if (val.length > 7 && /[a-záéíóúñ]/i.test(val) &&
-          !/^(nan|cotizacion|coberturas|condiciones base|presentacion|aseguradora|aseguradob|ramo|total|valor asegurado)/i.test(normalize(val)) &&
-          !isHeaderCell(val) &&
-          !/^\d+$/.test(val)) { covCol = j; texto = val; break; }
-      }
-      if (covCol === -1) continue;
-      const respCol = findResponseCol(data, covCol);
-      const resp = String(row[respCol] != null ? row[respCol] : "").trim();
-      // solo sirve si la fila YA tiene una respuesta distinta a la cobertura
-      if (!resp || respCol === covCol || isHeaderCell(resp)) continue;
-      if (normalize(resp) === normalize(texto)) continue;
-      if (resp.length > 160) continue; // descarta párrafos largos (no son respuestas)
-      pairs.push({ cobertura: texto, respuesta: resp, count: 1 });
-    }
-  }
-  // dedup por cobertura normalizada (gana la última aparición)
-  const map = new Map();
-  for (const p of pairs) map.set(normalize(p.cobertura), p);
-  return [...map.values()];
-}
 
 // ─── IA solo para pendientes (vía proxy serverless /api/quote) ──────────────────
 // La API key vive en el servidor (Groq), nunca en el navegador.
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Selecciona los ejemplos de memoria más parecidos al lote (menos tokens por llamada).
-function relevantKB(items, kb, max = 12) {
-  const itemTokens = new Set(items.flatMap(it => tokens(it.texto)));
-  if (itemTokens.size === 0 || kb.length <= max) return kb.slice(0, max);
-  return kb
-    .map(k => {
-      const kt = tokens(k.cobertura);
-      let overlap = 0;
-      for (const t of kt) if (itemTokens.has(t)) overlap++;
-      return { k, overlap };
-    })
-    .sort((a, b) => b.overlap - a.overlap)
-    .slice(0, max)
-    .map(s => s.k);
-}
 
-async function callAI(pendientes, hoja, kb, instrucciones = "") {
+async function callAI(pendientes, hoja, kb, instrucciones = "", getToken = null) {
   const MAX_RETRIES = 4;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000); // 30s de timeout por lote
     try {
+      // El proxy de IA exige sesión: adjunta el token de Clerk (fresco en cada
+      // intento, por si expira durante una corrida larga).
+      const token = getToken ? await getToken() : null;
       const res = await fetch("/api/quote", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         signal: ctrl.signal,
         body: JSON.stringify({
           hoja,
@@ -515,17 +311,20 @@ async function callAI(pendientes, hoja, kb, instrucciones = "") {
         }),
       });
 
-      // 429 = límite de velocidad de Groq → espera y reintenta
+      // 429 = límite de velocidad (Groq) o de uso por usuario → espera y reintenta.
       if (res.status === 429) {
-        let retryAfter = 0;
-        try { const j = await res.json(); retryAfter = Number(j.retryAfter) || 0; } catch {}
+        let retryAfter = 0, serverMsg = "";
+        try { const j = await res.json(); retryAfter = Number(j.retryAfter) || 0; serverMsg = j.error || ""; } catch {}
         clearTimeout(timer);
         if (attempt < MAX_RETRIES) {
-          const waitMs = retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * 2 ** attempt, 20000);
-          await sleep(waitMs);
+          // Espera lo que pida el servidor, PERO con tope de 20 s: un límite
+          // diario reporta un retryAfter de horas y no queremos colgar la app.
+          const base = retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt;
+          await sleep(Math.min(base, 20000));
           continue;
         }
-        throw new Error("Groq está saturado (429). Espera un momento y vuelve a intentar.");
+        // Tras los reintentos, surfacea el motivo real (límite diario, etc.).
+        throw new Error(serverMsg || "Servicio de IA saturado (429). Espera un momento y vuelve a intentar.");
       }
 
       if (!res.ok) {
@@ -605,11 +404,8 @@ export default function AutoCotizador() {
   const tr = STR[lang]; // textos del idioma activo (ES/EN)
   const L = (es, en) => (lang === "en" ? en : es); // textos nuevos del asistente
   // El Asistente (subir archivo base + instrucciones + llenado automático con IA y
-  // memoria) está disponible para TODOS como pantalla de inicio: tanto la página
-  // personalizada de Gina como la página normal. El correo de Gina solo cambia el
-  // saludo personalizado.
+  // memoria) está disponible para TODOS como pantalla de inicio.
   const userEmail = (user?.primaryEmailAddress?.emailAddress || "").trim().toLowerCase();
-  const isGina = userEmail === "galvarado@seguroscondor.com";
   const canUseAssistant = true;     // visible para todos
   const toggleLang = useCallback(() => {
     setLang(prev => { const next = prev === "es" ? "en" : "es"; saveLang(next); return next; });
@@ -1054,7 +850,7 @@ export default function AutoCotizador() {
     setRowLoading(`${sName}::${idx}`);
     try {
       const items = [{ texto: c.texto }];
-      const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current);
+      const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current, getTokenRef.current);
       const r = ans[0];
       if (r && r.respuesta) {
         setSheets(prev => {
@@ -1282,7 +1078,7 @@ export default function AutoCotizador() {
         if (myIdx >= batches.length) return;
         const { sName, items } = batches[myIdx];
         try {
-          const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current);
+          const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current, getTokenRef.current);
           ans.forEach(({ idx, respuesta, confianza }) => {
             const target = items[idx - 1];
             if (target && respuesta) {
@@ -1683,11 +1479,15 @@ export default function AutoCotizador() {
   // Reporte de UNA página, listo para imprimir o guardar como PDF y reenviar
   // a la gerencia. Se abre en una ventana limpia con estilo claro corporativo.
   const printROI = () => {
+    // Escapa TODO lo que se interpole en el HTML crudo (nombre de empresa, de
+    // usuario, de archivo…): evita inyección de HTML/script en el reporte.
+    const esc = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const rows = roiItems.map(h => {
       const autoH = h.auto ?? h.answered ?? 0;
       const minH = h.savedMin ?? Math.round((autoH * SECS_PER_ITEM) / 60);
       const pctH = h.total ? Math.round((autoH / h.total) * 100) : 0;
-      return `<tr><td>${new Date(h.ts || 0).toLocaleDateString()}</td><td>${String(h.fileName || "").replace(/</g, "&lt;")}</td><td style="text-align:right">${h.total || 0}</td><td style="text-align:right">${pctH}%</td><td style="text-align:right">${fmtMin(minH)}</td></tr>`;
+      return `<tr><td>${esc(new Date(h.ts || 0).toLocaleDateString())}</td><td>${esc(h.fileName)}</td><td style="text-align:right">${h.total || 0}</td><td style="text-align:right">${pctH}%</td><td style="text-align:right">${esc(fmtMin(minH))}</td></tr>`;
     }).join("");
     const t = (es, en) => (lang === "en" ? en : es);
     const html = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
@@ -1707,7 +1507,7 @@ export default function AutoCotizador() {
   @media print{body{margin:14mm}}
 </style></head><body>
 <h1>${t("Reporte de resultados — Auto-Cotizador", "Results report — Auto-Cotizador")}</h1>
-<p class="sub">${roiOwner ? roiOwner + " · " : ""}${t("Período", "Period")}: ${roiPeriodLabel} · ${t("Generado", "Generated")}: ${new Date().toLocaleString()}</p>
+<p class="sub">${roiOwner ? esc(roiOwner) + " · " : ""}${t("Período", "Period")}: ${esc(roiPeriodLabel)} · ${t("Generado", "Generated")}: ${esc(new Date().toLocaleString())}</p>
 <div class="grid">
   <div class="card"><b>${roi.archivos}</b><span>${t("Plantillas procesadas", "Templates processed")}</span></div>
   <div class="card"><b>${roi.respondidas}</b><span>${t("Coberturas respondidas", "Coverages answered")}</span></div>

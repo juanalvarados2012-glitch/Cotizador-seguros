@@ -33,19 +33,29 @@ npm run build
 npm run preview
 ```
 
-## 🔐 Seguridad (API key)
+## 🔐 Seguridad (API key + acceso)
 
 La clave de Groq vive **solo en el servidor**: el navegador llama a `/api/quote`
 (serverless function en `api/quote.js`) y esa función habla con Groq usando
 `GROQ_API_KEY`. La key nunca se expone al cliente.
 
+Además, **`/api/quote` no es de acceso anónimo**: exige un token de sesión de
+Clerk válido (la app ya está detrás de login) y aplica un **límite de uso por
+usuario** (configurable con `QUOTE_RL_PER_MIN` / `QUOTE_RL_PER_DAY`). Así, nadie
+que descubra la URL puede quemar tu cuota/dinero de Groq. Lo mismo aplica a
+`/api/kb`: el servidor verifica la firma del token y toma la empresa del token,
+nunca de un parámetro del cliente.
+
 ## ☁️ Despliegue en Vercel
 
-1. Importa el repo en Vercel (detecta Vite automáticamente; `api/quote.js` se
-   publica como Serverless Function).
+1. Importa el repo en Vercel (detecta Vite automáticamente; `api/quote.js` y
+   `api/kb.js` se publican como Serverless Functions).
 2. En **Settings → Environment Variables** agrega:
    - `GROQ_API_KEY` = tu clave de Groq
+   - `VITE_CLERK_PUBLISHABLE_KEY` = clave pública de Clerk (login)
+   - `CLERK_SECRET_KEY` = clave secreta de Clerk (autentica `/api/quote` y `/api/kb`)
    - `GROQ_MODEL` (opcional) = `llama-3.3-70b-versatile`
+   - `QUOTE_RL_PER_MIN` / `QUOTE_RL_PER_DAY` (opcional) = límites de uso de IA
 3. Deploy. Listo.
 
 ## Memoria
@@ -78,6 +88,31 @@ procesadas, % de autollenado, tiempo recuperado y ahorro estimado en dólares
 (costo/hora editable). Incluye **reporte de 1 página** listo para imprimir o
 guardar como PDF y reenviar a gerencia — es el argumento de compra del piloto.
 
+## 🧪 Desarrollo y calidad
+
+```bash
+npm test        # corre la suite de pruebas (Vitest)
+npm run lint    # ESLint (cliente React + servidor node)
+npm run build   # build de producción
+```
+
+La lógica delicada está cubierta por pruebas: el **matching** de coberturas
+(`src/matching.js`), la **sincronización** de memoria (`src/cloudSync.js` y
+`api/_merge.js`) y la **exportación de alta fidelidad** del Excel
+(`src/xlsxExport.js`, con un round-trip real que reabre el archivo generado).
+Cada push y PR ejecuta lint + tests + build en GitHub Actions (`.github/workflows/ci.yml`).
+
+### Estructura
+
+- `src/App.jsx` — UI y orquestación.
+- `src/matching.js` — matching de coberturas + extracción del Excel (lógica pura).
+- `src/cloudSync.js` — fusión de memoria del equipo (cliente).
+- `src/xlsxExport.js` — exportación que preserva el formato del broker.
+- `api/quote.js` — proxy de IA (auth Clerk + rate limit).
+- `api/kb.js` — memoria del equipo (auth Clerk + compare-and-swap).
+- `api/_auth.js` · `api/_kv.js` · `api/_merge.js` · `api/_ratelimit.js` — módulos
+  compartidos del servidor (los `_` no se publican como funciones en Vercel).
+
 ## Stack
 
-React 18 · Vite · SheetJS (xlsx) · Groq API (proxy serverless) · Clerk · Upstash Redis (opcional)
+React 18 · Vite · SheetJS (xlsx) · Groq API (proxy serverless) · Clerk · Upstash Redis (opcional) · Vitest · ESLint
