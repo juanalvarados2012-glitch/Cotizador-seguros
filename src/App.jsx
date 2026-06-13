@@ -447,7 +447,14 @@ export default function AutoCotizador() {
       const text = await file.text();
       const data = JSON.parse(text);
       const incoming = Array.isArray(data) ? data : data.kb;
-      if (!Array.isArray(incoming) || !incoming.every(k => k && k.cobertura && "respuesta" in k)) {
+      // Validación robusta: cada entrada debe tener cobertura y respuesta válida
+      const isValidEntry = (k) => {
+        if (!k || typeof k !== "object") return false;
+        if (typeof k.cobertura !== "string" || !k.cobertura.trim()) return false;
+        if (typeof k.respuesta !== "string" || !k.respuesta.trim()) return false;
+        return true;
+      };
+      if (!Array.isArray(incoming) || !incoming.every(isValidEntry)) {
         throw new Error(tr.errBadStructure);
       }
       // Une con la actual (prioriza lo importado).
@@ -613,7 +620,12 @@ export default function AutoCotizador() {
       notify("info", msg);
       return;
     }
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; setListening(false); return; }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { console.warn("Error stopping recognition:", e); }
+      recognitionRef.current = null;
+      setListening(false);
+      return;
+    }
     const rec = new SR();
     rec.lang = lang === "en" ? "en-US" : "es-ES";
     rec.continuous = true; rec.interimResults = false;
@@ -625,9 +637,16 @@ export default function AutoCotizador() {
       setInstrucciones(prev => { const next = (prev ? prev + " " : "") + txt; instruccionesRef.current = next; return next; });
     };
     rec.onend = () => { setListening(false); recognitionRef.current = null; };
-    rec.onerror = () => { setListening(false); recognitionRef.current = null; };
-    recognitionRef.current = rec; setListening(true);
-    try { rec.start(); } catch { setListening(false); recognitionRef.current = null; }
+    rec.onerror = (err) => { console.warn("Speech recognition error:", err); setListening(false); recognitionRef.current = null; };
+    try {
+      recognitionRef.current = rec;
+      setListening(true);
+      rec.start();
+    } catch (e) {
+      console.error("Failed to start speech recognition:", e);
+      setListening(false);
+      recognitionRef.current = null;
+    }
   }, [lang, notify]);
 
   const handleFile = useCallback(async (file) => {
@@ -728,7 +747,8 @@ export default function AutoCotizador() {
     }
 
     setProcessing(true); setProgress(0);
-    const updated = JSON.parse(JSON.stringify(sheets)); // deep clone para evitar mutaciones
+    // Evitar deep clone innecesario: mantener referencias a los items y actualizar solo lo que cambia
+    const updates = new Map(); // { "sName::idx": { respuesta, tipo, confianza } }
     let resueltas = 0, fallidas = 0;
     let firstError = null;
     let rateLimited = false;
@@ -739,9 +759,9 @@ export default function AutoCotizador() {
     const BATCH_SIZE = 30;
     const batches = [];
     for (const sName of sheetsConPend) {
-      const pend = updated[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
+      const pend = sheets[sName].coverages.filter(c => c.tipo === "Pendiente" && !c.editado);
       for (let i = 0; i < pend.length; i += BATCH_SIZE) {
-        batches.push({ sName, items: pend.slice(i, i + BATCH_SIZE) });
+        batches.push({ sName, startIdx: sheets[sName].coverages.findIndex(c => c === pend[i]), items: pend.slice(i, i + BATCH_SIZE) });
       }
     }
 
@@ -759,25 +779,38 @@ export default function AutoCotizador() {
       while (!stop) {
         const myIdx = nextIdx++;
         if (myIdx >= batches.length) return;
-        const { sName, items } = batches[myIdx];
+        const { sName, startIdx, items } = batches[myIdx];
         try {
           const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current, getTokenRef.current);
           ans.forEach(({ idx, respuesta, confianza }) => {
             const target = items[idx - 1];
             if (target && respuesta) {
-              target.respuesta = respuesta;
-              target.tipo = "IA";
-              target.confianza = confianza || "media";
+              const conf = (confianza || "media").toLowerCase();
+              updates.set(`${sName}::${startIdx + idx - 1}`, {
+                respuesta, tipo: "IA", confianza: confianza || "media"
+              });
               resueltas++;
               // Auto-aprender: guarda en memoria solo respuestas confiables
-              // (no "baja" ni "REVISAR") para no ensuciarla con posibles errores.
-              const conf = (confianza || "media").toLowerCase();
               if (conf !== "baja" && !/^\s*revisar\s*$/i.test(respuesta)) {
                 learned.push({ texto: target.texto, respuesta });
               }
             }
           });
-          setSheets(JSON.parse(JSON.stringify(updated))); // refresca el avance en pantalla lote a lote
+          // Refresca el avance en pantalla lote a lote (construcción inmutable mínima)
+          setSheets(prev => {
+            const upd = { ...prev };
+            for (const [key] of updates) {
+              const [sn, idx] = key.split("::");
+              if (sn === sName && upd[sn]) {
+                const cidx = parseInt(idx);
+                upd[sn] = { ...upd[sn], coverages: [...upd[sn].coverages] };
+                if (upd[sn].coverages[cidx]) {
+                  upd[sn].coverages[cidx] = { ...upd[sn].coverages[cidx], ...updates.get(key) };
+                }
+              }
+            }
+            return upd;
+          });
         } catch (e) {
           console.error(e);
           fallidas += items.length;
@@ -800,7 +833,19 @@ export default function AutoCotizador() {
 
     setProgress(100);
     setProgressText("");
-    setSheets(JSON.parse(JSON.stringify(updated)));
+    // Aplicar todos los cambios acumulados en una sola actualización
+    setSheets(prev => {
+      const upd = { ...prev };
+      for (const [key, change] of updates) {
+        const [sName, idx] = key.split("::");
+        const cidx = parseInt(idx);
+        if (upd[sName] && upd[sName].coverages[cidx]) {
+          upd[sName] = { ...upd[sName], coverages: [...upd[sName].coverages] };
+          upd[sName].coverages[cidx] = { ...upd[sName].coverages[cidx], ...change };
+        }
+      }
+      return upd;
+    });
     setProcessing(false);
 
     if (rateLimited) {
