@@ -247,7 +247,7 @@ export default function AutoCotizador() {
       if (!cancelled) refreshHist();
     })();
     return () => { cancelled = true; };
-  }, [userLoaded, orgLoaded, scopeId, notify, tr]);
+  }, [userLoaded, orgLoaded, scopeId, orgId, notify, tr, refreshHist, persistKB, queueSync]);
 
   // ── Autoguardado de las respuestas (se dispara al cambiar la sesión) ──────
   useEffect(() => {
@@ -316,7 +316,7 @@ export default function AutoCotizador() {
         sessionBytesRef.current = data.bytes;
         const XLSX = await getXLSX();
         setWb(XLSX.read(data.bytes, { type: "array", cellNF: true }));
-        idbSet({ fileName: id, bytes: data.bytes, ts: Date.now() }).catch(() => {});
+        idbSet({ fileName: id, bytes: data.bytes, ts: Date.now() }).catch(e => console.warn("IDB error saving session:", e));
       } else {
         setWb(null);
       }
@@ -341,7 +341,8 @@ export default function AutoCotizador() {
     if (!orgIdRef.current || (p.up.size === 0 && p.del.size === 0)) return;
     const upserts = [...p.up.values()];
     const deletes = [...p.del.values()];
-    pendingSyncRef.current = { up: new Map(), del: new Map() };
+    const newQueue = { up: new Map(), del: new Map() };
+    pendingSyncRef.current = newQueue;
     try {
       setSyncInfo(s => ({ ...s, estado: "sync" }));
       const token = await getTokenRef.current?.();
@@ -509,12 +510,14 @@ export default function AutoCotizador() {
 
   // ── IA para una sola cobertura ───────────────────────────────────────────
   const aiSingle = async (sName, idx) => {
-    const c = sheets[sName].coverages[idx];
+    const c = sheets?.[sName]?.coverages?.[idx];
+    if (!c) return;
     setRowLoading(`${sName}::${idx}`);
     try {
       const items = [{ texto: c.texto }];
       const ans = await callAI(items, sName, relevantKB(items, kbRef.current), instruccionesRef.current, getTokenRef.current);
-      const r = ans[0];
+      const r = ans?.[0];
+      if (!r) return;
       if (r && r.respuesta) {
         setSheets(prev => {
           const u = { ...prev };
@@ -553,8 +556,10 @@ export default function AutoCotizador() {
       const workbook = XLSX.read(buf, { type: "array" });
       const pairs = kbFromWorkbook(workbook, XLSX);
       if (pairs.length === 0) {
-        notify("info", L("No encontré pares pregunta/respuesta en ese archivo. ¿Tiene una columna con respuestas ya escritas?",
-          "I couldn't find question/answer pairs in that file. Does it have a column with answers already filled in?"));
+        const msg = lang === "en"
+          ? "I couldn't find question/answer pairs in that file. Does it have a column with answers already filled in?"
+          : "No encontré pares pregunta/respuesta en ese archivo. ¿Tiene una columna con respuestas ya escritas?";
+        notify("info", msg);
         return;
       }
       const map = new Map();
@@ -563,8 +568,10 @@ export default function AutoCotizador() {
       await persistKB([...map.values()]);
       setBaseFileName(file.name);
       setBaseCount(pairs.length);
-      notify("ok", L(`Archivo base cargado: ${pairs.length} respuestas listas para usar.`,
-        `Base file loaded: ${pairs.length} answers ready to use.`));
+      const okMsg = lang === "en"
+        ? `Base file loaded: ${pairs.length} answers ready to use.`
+        : `Archivo base cargado: ${pairs.length} respuestas listas para usar.`;
+      notify("ok", okMsg);
     } catch (e) {
       console.error(e);
       notify("error", tr.msgFileError(e.message));
@@ -589,8 +596,10 @@ export default function AutoCotizador() {
   const toggleVoice = useCallback(() => {
     const SR = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
     if (!SR) {
-      notify("info", L("Tu navegador no soporta dictado por voz. Usa Chrome de escritorio o escribe las instrucciones.",
-        "Your browser doesn't support voice dictation. Use desktop Chrome or type the instructions."));
+      const msg = lang === "en"
+        ? "Your browser doesn't support voice dictation. Use desktop Chrome or type the instructions."
+        : "Tu navegador no soporta dictado por voz. Usa Chrome de escritorio o escribe las instrucciones.";
+      notify("info", msg);
       return;
     }
     if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; setListening(false); return; }
@@ -629,7 +638,7 @@ export default function AutoCotizador() {
       const extracted = extractCoverages(workbook, kbRef.current, XLSX);
       // Guardar el archivo original para poder exportar aunque se recargue la página.
       sessionBytesRef.current = buf.slice(0);
-      idbSet({ fileName: file.name, bytes: buf.slice(0), ts: Date.now() }).catch(() => {});
+      idbSet({ fileName: file.name, bytes: buf.slice(0), ts: Date.now() }).catch(e => console.warn("IDB error saving file:", e));
       setWb(workbook);
       setFileName(file.name);
       setSheets(extracted);
@@ -708,7 +717,7 @@ export default function AutoCotizador() {
     }
 
     setProcessing(true); setProgress(0);
-    const updated = { ...sheets };
+    const updated = JSON.parse(JSON.stringify(sheets)); // deep clone para evitar mutaciones
     let resueltas = 0, fallidas = 0;
     let firstError = null;
     let rateLimited = false;
@@ -757,7 +766,7 @@ export default function AutoCotizador() {
               }
             }
           });
-          setSheets({ ...updated }); // refresca el avance en pantalla lote a lote
+          setSheets(JSON.parse(JSON.stringify(updated))); // refresca el avance en pantalla lote a lote
         } catch (e) {
           console.error(e);
           fallidas += items.length;
@@ -780,7 +789,7 @@ export default function AutoCotizador() {
 
     setProgress(100);
     setProgressText("");
-    setSheets({ ...updated });
+    setSheets(JSON.parse(JSON.stringify(updated)));
     setProcessing(false);
 
     if (rateLimited) {
@@ -828,19 +837,18 @@ export default function AutoCotizador() {
   };
 
   const onBlurLearn = (sName, idx) => {
-    const c = sheets[sName].coverages[idx];
-    if (c.editado && c.respuesta) {
-      learn(c.texto, c.respuesta);
-      setSheets(prev => {
-        const u = { ...prev };
-        u[sName].coverages[idx].tipo = "Aprendida";
-        return u;
-      });
-      const nDup = propagateToDuplicates(c.texto, c.respuesta, sName, idx);
-      if (nDup > 0) {
-        notify("ok", L(`Respuesta aplicada también a ${nDup} cobertura(s) idéntica(s) pendiente(s).`,
-          `Answer also applied to ${nDup} identical pending coverage(s).`));
-      }
+    const c = sheets?.[sName]?.coverages?.[idx];
+    if (!c || !c.editado || !c.respuesta) return;
+    learn(c.texto, c.respuesta);
+    setSheets(prev => {
+      const u = { ...prev };
+      u[sName].coverages[idx].tipo = "Aprendida";
+      return u;
+    });
+    const nDup = propagateToDuplicates(c.texto, c.respuesta, sName, idx);
+    if (nDup > 0) {
+      notify("ok", L(`Respuesta aplicada también a ${nDup} cobertura(s) idéntica(s) pendiente(s).`,
+        `Answer also applied to ${nDup} identical pending coverage(s).`));
     }
   };
 
@@ -1145,7 +1153,7 @@ export default function AutoCotizador() {
     // Escapa TODO lo que se interpole en el HTML crudo (nombre de empresa, de
     // usuario, de archivo…): evita inyección de HTML/script en el reporte.
     const esc = (s) => String(s ?? "")
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     const rows = roiItems.map(h => {
       const autoH = h.auto ?? h.answered ?? 0;
       const minH = h.savedMin ?? Math.round((autoH * SECS_PER_ITEM) / 60);
