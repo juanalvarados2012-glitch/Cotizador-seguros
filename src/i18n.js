@@ -14,11 +14,11 @@ export function detectLang() {
   try {
     const saved = localStorage.getItem("cotizador_lang");
     if (saved === "es" || saved === "en") return saved;
-  } catch { /* sin localStorage */ }
+  } catch (e) { console.warn("Could not read language preference:", e); }
   try {
     const nav = (navigator.language || "es").toLowerCase();
     return nav.startsWith("es") ? "es" : "en";
-  } catch { return "es"; }
+  } catch (e) { console.warn("Could not detect navigator language:", e); return "es"; }
 }
 
 export function saveLang(lang) {

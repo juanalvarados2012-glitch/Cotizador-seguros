@@ -105,12 +105,14 @@ export default function AutoCotizador() {
   });
   const [rowLoading, setRowLoading] = useState(null); // "sName::idx" mientras la IA responde una fila
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 640);
+  const [toastDuration, setToastDuration] = useState(null); // duracion actual del toast
   const kbRef = useRef(SEED_KB);
   // ☁ refs de sincronización: siempre el token/empresa vigentes, sin re-renders
   const getTokenRef = useRef(null);
   const orgIdRef = useRef(null);
   const syncTimerRef = useRef(null);
   const pendingSyncRef = useRef({ up: new Map(), del: new Map() });
+  const toastTimerRef = useRef(null); // timer para auto-cerrar el toast
   const fileRef = useRef();
   const kbFileRef = useRef();
   const backupFileRef = useRef();
@@ -146,11 +148,20 @@ export default function AutoCotizador() {
     return () => window.removeEventListener("beforeunload", h);
   }, [processing]);
 
-  // Toast con auto-cierre
+  // Toast con auto-cierre controlado
   const notify = useCallback((type, msg, ms = 4500) => {
+    clearTimeout(toastTimerRef.current);
     setToast({ type, msg });
-    if (ms) setTimeout(() => setToast(t => (t && t.msg === msg ? null : t)), ms);
+    setToastDuration(ms);
   }, []);
+
+  // Auto-cierre del toast con limpieza segura
+  useEffect(() => {
+    if (!toast || !toastDuration) return;
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), toastDuration);
+    return () => clearTimeout(toastTimerRef.current);
+  }, [toast, toastDuration]);
 
   // Cargar memoria + sesión del USUARIO activo (se re-ejecuta al cambiar de
   // cuenta). La primera vez de cada usuario migra los datos antiguos (globales).

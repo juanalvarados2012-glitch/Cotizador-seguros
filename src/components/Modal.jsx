@@ -4,9 +4,11 @@ import { C, sx } from "../ui/theme";
 // fondo oscuro, tarjeta centrada, encabezado con título y botón de cerrar. El
 // cuerpo de cada panel va como `children`. Cerrar al hacer clic fuera o en ✕.
 export function Modal({ title, titleColor = C.text, maxWidth = 640, narrow = false, onClose, children }) {
+  const titleId = `modal-title-${Math.random()}`;
   return (
     <div
       onClick={onClose}
+      role="presentation"
       style={{
         position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)",
         display: "flex", justifyContent: "center", alignItems: "flex-start",
@@ -15,6 +17,9 @@ export function Modal({ title, titleColor = C.text, maxWidth = 640, narrow = fal
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         style={{
           background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14,
           width: "100%", maxWidth, maxHeight: "88vh", display: "flex",
@@ -22,8 +27,8 @@ export function Modal({ title, titleColor = C.text, maxWidth = 640, narrow = fal
         }}
       >
         <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: titleColor }}>{title}</span>
-          <button onClick={onClose} style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
+          <span id={titleId} style={{ fontSize: 14, fontWeight: 700, color: titleColor }}>{title}</span>
+          <button onClick={onClose} aria-label="Close modal" style={{ ...sx.btnSm, fontSize: 16, padding: "2px 10px" }}>✕</button>
         </div>
         {children}
       </div>
